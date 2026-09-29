@@ -1,0 +1,11 @@
+[Unit]
+Description=Keyboard and power button status lights
+
+[Service]
+WorkingDirectory=%h/repos/keylights
+ExecStart=%h/repos/keylights/venv/bin/python -m keylights
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
