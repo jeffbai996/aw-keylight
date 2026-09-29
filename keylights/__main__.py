@@ -22,7 +22,7 @@ def main() -> None:
     args = parser.parse_args()
 
     load_dotenv()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     config = load_config(os.environ)
 
     llama_get = make_http_get(config.llama_url) if config.llama_url else None
