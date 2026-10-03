@@ -1,6 +1,7 @@
 """Runtime settings, read from the environment (a gitignored .env in practice)."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -17,6 +18,11 @@ class Config:
     slow_poll_interval: float
     power_zone: int
     tick_hz: float
+    dim_boost: float
+    backlight_state_path: str
+
+
+DEFAULT_BACKLIGHT_STATE = "~/.local/state/kbd-light/state"
 
 
 def _hex_color(value: str) -> Color:
@@ -34,4 +40,6 @@ def load_config(env: Mapping[str, str]) -> Config:
         slow_poll_interval=float(env.get("KEYLIGHTS_SLOW_POLL_INTERVAL", "2")),
         power_zone=int(env.get("KEYLIGHTS_POWER_ZONE", "1")),
         tick_hz=float(env.get("KEYLIGHTS_TICK_HZ", "50")),
+        dim_boost=float(env.get("KEYLIGHTS_DIM_BOOST", "1.6")),
+        backlight_state_path=os.path.expanduser(env.get("KEYLIGHTS_BACKLIGHT_STATE", DEFAULT_BACKLIGHT_STATE)),
     )

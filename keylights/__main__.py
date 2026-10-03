@@ -27,7 +27,7 @@ def main() -> None:
 
     llama_get = make_http_get(config.llama_url) if config.llama_url else None
     daemon = Daemon(
-        Sources(llama_get),
+        Sources(llama_get, config.backlight_state_path),
         Keyboard(HidrawTransport()),
         PowerButton(HidrawElcTransport(), config.power_zone),
         config,

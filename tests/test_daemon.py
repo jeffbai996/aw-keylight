@@ -1,10 +1,15 @@
 from keylights.config import load_config
 from keylights.daemon import Daemon
 from keylights.device import DeviceError
+from keylights.effects import AMBER, GREEN, NET_IDLE
 from keylights.sources import LlamaState
 
 BASE = (255, 255, 255)
 UP_IDLE = LlamaState(up=True, processing=False, decoded=0)
+
+
+def reading(done):
+    return LlamaState(up=True, processing=True, decoded=0, prompt_new=4000, prompt_done=done)
 
 
 class FakeSources:
@@ -13,6 +18,10 @@ class FakeSources:
         self.net_value = 0
         self.temp_value = 45.0
         self.mic_value = False
+        self.backlight_value = None
+
+    def backlight_state(self):
+        return self._get(self.backlight_value)
 
     def _get(self, value):
         if isinstance(value, Exception):
@@ -102,3 +111,74 @@ def test_shutdown_restores_previous_keyboard_lighting():
 
     assert keyboard.frames[-1] == {k: BASE for k in (0, 1, 2, 3, 4, 5, 15)}
     assert power.restored is True
+
+
+def collect_del(daemon, keyboard, start, stop, step=0.01):
+    first = len(keyboard.frames)
+    t = start
+    while t <= stop:
+        daemon.tick(now=t)
+        t += step
+    return {frame[15] for frame in keyboard.frames[first:]}
+
+
+def test_del_blinks_amber_while_prompt_progress_is_advancing():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.llama_value = reading(0)
+    daemon.tick(now=0.0)
+    sources.llama_value = reading(2048)
+    assert collect_del(daemon, keyboard, 1.0, 1.5) == {AMBER, (0, 0, 0)}
+
+
+def test_del_goes_solid_amber_when_prompt_progress_stalls_past_the_hold():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.llama_value = reading(0)
+    daemon.tick(now=0.0)
+    sources.llama_value = reading(2048)
+    daemon.tick(now=1.0)
+    assert collect_del(daemon, keyboard, 8.0, 8.5) == {AMBER}
+
+
+def test_del_turns_solid_green_once_the_prompt_is_fully_read():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.llama_value = reading(0)
+    daemon.tick(now=0.0)
+    sources.llama_value = reading(4000)
+    assert collect_del(daemon, keyboard, 1.0, 1.5) == {GREEN}
+
+
+def test_unanswered_slots_poll_keeps_the_last_known_state():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.llama_value = reading(0)
+    daemon.tick(now=0.0)
+    sources.llama_value = LlamaState(up=True, processing=False, decoded=0, answered=False)
+    daemon.tick(now=0.5)
+    assert keyboard.frames[-1][15] == AMBER
+
+
+def test_unanswered_poll_before_any_reading_leaves_the_server_up():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.llama_value = LlamaState(up=True, processing=False, decoded=0, answered=False)
+    daemon.tick(now=0.0)
+    assert keyboard.frames[-1][15] == GREEN
+
+
+def test_esc_and_del_are_boosted_only_while_the_backlight_is_dim():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.backlight_value = "on"
+    daemon.tick(now=0.0)
+    on_esc = keyboard.frames[-1][0]
+    assert on_esc == NET_IDLE
+
+    sources.backlight_value = "dim"
+    daemon.tick(now=0.1)
+    dim_esc = keyboard.frames[-1][0]
+    assert dim_esc == tuple(min(255, round(c * 1.6)) for c in NET_IDLE)
+    assert keyboard.frames[-1][1] == keyboard.frames[0][1]  # F1 is not boosted
+
+
+def test_unreadable_backlight_state_applies_no_boost():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.backlight_value = OSError("unreadable")
+    daemon.tick(now=0.0)
+    assert keyboard.frames[-1][0] == NET_IDLE

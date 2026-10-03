@@ -5,13 +5,21 @@ and lighting chip `187c:0550`).
 
 | Light | Shows |
 |---|---|
-| DEL | Inference server. Steady green when up, flickers with generated tokens (up to 20 blinks/s), amber while reading a prompt, off when the server is down. |
-| ESC | Network traffic on this machine. Dim blue when idle, blinks with traffic (up to 10 blinks/s). |
+| DEL | Inference server. Amber while a prompt is read: blinking at a rate that follows prompt speed while it advances, steady when it has stalled. Steady green while the first token is pending and when idle or done. Flickers green with generated tokens. Off when the server is down. |
+| ESC | Network traffic on this machine. Faint blue when idle, blinks with traffic (up to `KEYLIGHTS_ESC_BLINK_CAP` blinks/s). |
 | F1-F4 | CPU temperature. Green at 45 C through yellow to red at 90 C. |
 | F5 | Red while the default microphone is muted. |
 | Power button | Inference server state as a steady colour: green up, amber reading a prompt, off down. |
 
 On exit the managed keys return to `KEYLIGHTS_BASE_COLOR` and the power button to green.
+
+The backlight level is global, so while `kbd-light` is in dim mode ESC and DEL are scaled up by
+`KEYLIGHTS_DIM_BOOST` (default 1.6). The mode is read from `KEYLIGHTS_BACKLIGHT_STATE`
+(default `~/.local/state/kbd-light/state`).
+
+Blink caps and the render rate are `KEYLIGHTS_DEL_BLINK_CAP`, `KEYLIGHTS_ESC_BLINK_CAP` and
+`KEYLIGHTS_TICK_HZ`. The keyboard accepts about 110 updates a second, so a cap above 55 blinks/s
+cannot be drawn.
 
 ## Setup
 

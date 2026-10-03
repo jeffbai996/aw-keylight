@@ -23,3 +23,13 @@ def test_blink_caps_default_to_20_per_second_for_del_and_10_for_esc():
 
 def test_base_color_is_read_from_env_as_hex():
     assert load_config({"KEYLIGHTS_BASE_COLOR": "ff8000"}).base_color == (255, 128, 0)
+
+
+def test_dim_boost_defaults_to_1_6_and_is_overridable():
+    assert load_config({}).dim_boost == 1.6
+    assert load_config({"KEYLIGHTS_DIM_BOOST": "2.0"}).dim_boost == 2.0
+
+
+def test_backlight_state_path_defaults_under_the_home_state_dir_and_is_overridable():
+    assert load_config({}).backlight_state_path.endswith("/.local/state/kbd-light/state")
+    assert load_config({"KEYLIGHTS_BACKLIGHT_STATE": "/tmp/x"}).backlight_state_path == "/tmp/x"

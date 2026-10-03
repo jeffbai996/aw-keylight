@@ -6,6 +6,7 @@ inference server cannot stall the blink.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import threading
 import time
@@ -17,6 +18,10 @@ from .effects import MANAGED_KEYS, Inputs, build_frame
 from .sources import LLAMA_DOWN, LlamaState, net_rate, token_rate
 
 log = logging.getLogger(__name__)
+
+# The server evaluates the prompt in batches and answers /slots between them, so
+# progress arrives in lumps seconds apart. Blinking holds this long after the last one.
+PROMPT_ADVANCE_HOLD_S = 6.0
 
 
 class Daemon:
@@ -30,6 +35,11 @@ class Daemon:
         self._last_slow: float | None = None
         self._prev_decoded = 0
         self._prev_net: tuple[int, float] | None = None
+        self._prompt_done: int | None = None
+        self._prompt_mark = 0.0  # when the prompt counter last moved, or reading began
+        self._prompt_advanced_at: float | None = None
+        self._prompt_rate = 0.0
+        self._backlight: str | None = None
 
     def tick(self, now: float) -> None:
         self.poll(now)
@@ -45,7 +55,8 @@ class Daemon:
 
     def render(self, now: float) -> None:
         cfg = self._config
-        frame = build_frame(self._inputs, now, cfg.base_color, cfg.del_blink_cap, cfg.esc_blink_cap)
+        boost = cfg.dim_boost if self._backlight == "dim" else 1.0
+        frame = build_frame(self._inputs, now, cfg.base_color, cfg.del_blink_cap, cfg.esc_blink_cap, boost)
         try:
             self._keyboard.update(frame)
         except DeviceError as exc:
@@ -64,9 +75,15 @@ class Daemon:
 
     def _poll_fast(self, now: float) -> None:
         llama = self._safe(self._sources.llama, LLAMA_DOWN, "inference server")
-        dt = now - self._last_fast if self._last_fast is not None else 0.0
-        rate = token_rate(self._prev_decoded, llama.decoded, dt) if llama.processing else 0.0
-        self._prev_decoded = llama.decoded
+        previous = self._inputs
+        if llama.up and not llama.answered and previous.llama.up:
+            # A busy server stops answering /slots; its last reading is the best evidence.
+            llama, rate = previous.llama, previous.token_rate
+        else:
+            dt = now - self._last_fast if self._last_fast is not None else 0.0
+            rate = token_rate(self._prev_decoded, llama.decoded, dt) if llama.processing else 0.0
+            self._prev_decoded = llama.decoded
+            self._track_prompt(llama, now)
 
         cur_bytes = self._safe(self._sources.net_bytes, None, "network counters")
         net = 0.0
@@ -75,13 +92,36 @@ class Daemon:
                 net = net_rate(self._prev_net[0], self._prev_net[1], cur_bytes, now)
             self._prev_net = (cur_bytes, now)
 
-        self._inputs = Inputs(llama, rate, net, self._inputs.temp_c, self._inputs.muted)
+        self._backlight = self._safe(self._sources.backlight_state, None, "backlight state")
+        advancing = self._prompt_advanced_at is not None and now - self._prompt_advanced_at <= PROMPT_ADVANCE_HOLD_S
+        self._inputs = dataclasses.replace(
+            previous,
+            llama=llama,
+            token_rate=rate,
+            net_bytes_per_s=net,
+            prompt_rate=self._prompt_rate if llama.reading else 0.0,
+            prompt_advancing=llama.reading and advancing,
+        )
+
+    def _track_prompt(self, llama: LlamaState, now: float) -> None:
+        """Turns the prompt-evaluated counter into a smoothed tokens-per-second rate."""
+        done = llama.prompt_done
+        if not llama.reading or done is None:
+            self._prompt_done, self._prompt_advanced_at, self._prompt_rate = None, None, 0.0
+            return
+        if self._prompt_done is None or done < self._prompt_done:  # reading began, or a new request
+            self._prompt_done, self._prompt_mark, self._prompt_advanced_at, self._prompt_rate = done, now, None, 0.0
+        elif done > self._prompt_done:
+            elapsed = now - self._prompt_mark
+            if elapsed > 0:
+                sample = (done - self._prompt_done) / elapsed
+                self._prompt_rate = sample if self._prompt_rate == 0 else (self._prompt_rate + sample) / 2
+            self._prompt_done, self._prompt_mark, self._prompt_advanced_at = done, now, now
 
     def _poll_slow(self) -> None:
         temp = self._safe(self._sources.cpu_temp, None, "cpu temperature")
         muted = self._safe(self._sources.mic_muted, False, "mic state")
-        i = self._inputs
-        self._inputs = Inputs(i.llama, i.token_rate, i.net_bytes_per_s, temp, muted)
+        self._inputs = dataclasses.replace(self._inputs, temp_c=temp, muted=muted)
 
     @staticmethod
     def _safe(read, fallback, label: str):

@@ -7,6 +7,7 @@ from keylights.sources import (
     net_rate,
     parse_mic_muted,
     parse_net_bytes,
+    read_backlight_state,
     token_rate,
 )
 
@@ -34,8 +35,11 @@ class FakeLlama:
         raise AssertionError(path)
 
 
-def slot(processing, decoded):
-    return {"is_processing": processing, "next_token": [{"n_decoded": decoded}]}
+def slot(processing, decoded, n_prompt=None, processed=None, cache=0):
+    value = {"is_processing": processing, "next_token": [{"n_decoded": decoded}]}
+    if n_prompt is not None:
+        value.update(n_prompt_tokens=n_prompt, n_prompt_tokens_processed=processed, n_prompt_tokens_cache=cache)
+    return value
 
 
 def test_net_rate_from_proc_net_dev_sample_ignores_loopback():
@@ -69,6 +73,95 @@ def test_slots_prompt_phase_reports_reading():
     get = FakeLlama({"m": "loaded"}, {"m": [slot(True, 0)]})
     state = llama_state(get)
     assert state.up and state.processing and state.decoded == 0 and state.reading
+
+
+def test_slots_report_prompt_progress_net_of_cached_tokens():
+    get = FakeLlama({"m": "loaded"}, {"m": [slot(True, 0, n_prompt=5000, processed=1000, cache=3000)]})
+    state = llama_state(get)
+    assert (state.prompt_new, state.prompt_done) == (2000, 1000)
+    assert state.reading
+
+
+def test_prompt_fully_processed_is_no_longer_reading():
+    get = FakeLlama({"m": "loaded"}, {"m": [slot(True, 0, n_prompt=5000, processed=2000, cache=3000)]})
+    state = llama_state(get)
+    assert state.processing and state.decoded == 0
+    assert not state.reading
+
+
+def test_slots_without_prompt_fields_fall_back_to_the_decoded_rule():
+    get = FakeLlama({"m": "loaded"}, {"m": [slot(True, 0)]})
+    state = llama_state(get)
+    assert state.prompt_new is None and state.prompt_done is None
+    assert state.reading
+
+
+def test_idle_slot_prompt_fields_are_ignored():
+    get = FakeLlama({"m": "loaded"}, {"m": [slot(False, 0, n_prompt=5000, processed=100, cache=0)]})
+    state = llama_state(get)
+    assert state.prompt_new is None and not state.reading
+
+
+def test_slots_timeout_on_loaded_model_is_up_but_unanswered():
+    def get(path, params=None):
+        if path == "/v1/models":
+            return {"data": [{"id": "m", "status": {"value": "loaded"}}]}
+        raise TimeoutError("busy")
+
+    state = llama_state(get)
+    assert state.up and not state.answered and not state.processing
+
+
+def test_slots_http_error_is_an_answer_not_a_busy_server():
+    # A loaded model that does not serve /slots replies with an error; that says
+    # nothing about the other models being busy.
+    import urllib.error
+
+    def get(path, params=None):
+        if path == "/v1/models":
+            return {"data": [{"id": "m", "status": {"value": "loaded"}}]}
+        raise urllib.error.HTTPError("http://x/slots", 501, "not implemented", {}, None)
+
+    state = llama_state(get)
+    assert state.up and state.answered
+
+
+def test_wrapped_socket_timeout_counts_as_busy():
+    import urllib.error
+
+    def get(path, params=None):
+        if path == "/v1/models":
+            return {"data": [{"id": "m", "status": {"value": "loaded"}}]}
+        raise urllib.error.URLError(TimeoutError("timed out"))
+
+    assert not llama_state(get).answered
+
+
+def test_model_list_timeout_is_busy_not_down():
+    def get(path, params=None):
+        raise TimeoutError("timed out")
+
+    state = llama_state(get)
+    assert state.up and not state.answered
+
+
+def test_answered_is_true_when_every_loaded_model_responds():
+    get = FakeLlama({"m": "loaded"}, {"m": [slot(False, 0)]})
+    assert llama_state(get).answered
+
+
+def test_backlight_state_is_read_from_the_kbd_light_state_file(tmp_path):
+    path = tmp_path / "state"
+    path.write_text("dim\n")
+    assert read_backlight_state(path) == "dim"
+
+
+@pytest.mark.parametrize("content", ["", "bright\n", None])
+def test_backlight_state_is_none_when_missing_or_unknown(tmp_path, content):
+    path = tmp_path / "state"
+    if content is not None:
+        path.write_text(content)
+    assert read_backlight_state(path) is None
 
 
 def test_slots_decoded_tokens_are_summed_across_loaded_models():
