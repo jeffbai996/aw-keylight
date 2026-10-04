@@ -35,8 +35,10 @@ Every inference light uses the same colours:
   comes from the gate in front of it (`GET /_gate/activity` on an ollama-gate): while a request
   has streamed nothing yet the key blinks amber, and while events stream it flickers green at
   their rate. `#gpu=<telemetry url>@<host>` adds the host's GPU activity, which shows work the
-  gate cannot see, such as embeddings and whisper, as green flicker, and its gamemode flag. Embedding models are not
-  counted as a loaded chat model. A host silent for 5 seconds goes red, because with Ollama
+  gate cannot see, such as embeddings and whisper, as green flicker, and its gamemode flag. Any resident model, an embedder included, counts as
+  loaded: nothing resident is dark, which on a host with a pinned embedder is the abnormal state.
+  The speed of the GPU flicker follows power draw: about 6 flickers a second at a quarter of
+  idle-to-limit power, 16 at 140 W of a 350 W limit, capped at `KEYLIGHTS_DEL_BLINK_CAP`. A host silent for 5 seconds goes red, because with Ollama
   stopped the gate hangs instead of refusing on a WSL host with mirrored networking. The
   overlay also carries the host's gamemode flag: Ollama stopped for gaming is dark, not red.
 - `gpu` shows only a host's GPU, from a fleet status server's `/api/telemetry`. The URL is that

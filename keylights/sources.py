@@ -62,7 +62,7 @@ class OllamaState:
     """Ollama reports which models are loaded, not whether one is busy."""
 
     up: bool
-    loaded: bool  # a chat model is loaded; embedding models are ignored
+    loaded: bool  # any model is resident, an embedder included
     touched: float | None  # latest expiry among chat models; it moves when a request finishes
     answered: bool = True
     # Live activity, from an ollama-gate's /_gate/activity; None when the gate has no such
@@ -221,8 +221,10 @@ def ollama_state(get_json: GetJson, gpu: Callable[[], GpuState] | None = None) -
     chat = [m for m in models if not EMBEDDING_MODEL.search(str(m.get("name", "")))]
     stamps = [t for t in (parse_expires_at(str(m.get("expires_at", ""))) for m in chat) if t is not None]
     in_flight, awaiting, events = _gate_activity(get_json) if chat else (None, None, None)
+    # Loaded means any model is resident, an embedder included: where one is pinned, nothing
+    # resident is the abnormal state. Chat models alone drive the expiry pulse and the gate counters.
     return OllamaState(
-        up=True, loaded=bool(chat), touched=max(stamps) if stamps else None,
+        up=True, loaded=bool(models), touched=max(stamps) if stamps else None,
         in_flight=in_flight, awaiting=awaiting, events=events, gpu=_overlay(gpu),
     )
 

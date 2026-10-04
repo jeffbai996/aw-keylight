@@ -253,9 +253,10 @@ def test_ollama_with_a_chat_model_loaded_reports_loaded_and_its_expiry():
     assert state.touched == parse_expires_at(PS_CHAT["expires_at"])
 
 
-def test_ollama_embedding_models_do_not_count_as_inference():
+def test_a_resident_embedding_model_counts_as_loaded_but_not_as_chat_activity():
     state = ollama_state(ps(PS_EMBED))
-    assert state.up and not state.loaded and state.touched is None
+    assert state.up and state.loaded
+    assert state.touched is None and state.in_flight is None  # chat expiry and the gate's counters stay about chat
 
 
 def test_ollama_expiry_comes_from_the_chat_model_only():
@@ -457,9 +458,9 @@ def test_a_gpu_overlay_that_is_down_or_slow_is_left_out_rather_than_darkening_th
     assert ollama_state(ps(PS_CHAT), gpu=lambda: slow).gpu is None
 
 
-def test_the_gpu_overlay_is_read_even_when_no_chat_model_is_loaded():
+def test_the_gpu_overlay_is_read_when_only_an_embedder_is_loaded():
     state = ollama_state(ps(PS_EMBED), gpu=lambda: BURST)
-    assert not state.loaded and state.gpu == BURST
+    assert state.loaded and state.gpu == BURST
 
 
 @pytest.mark.parametrize("text, online", [
@@ -502,3 +503,8 @@ def test_the_gpu_overlay_is_kept_when_ollama_is_merely_silent():
 
     state = ollama_state(slow, gpu=lambda: GAMING)
     assert state.up and not state.answered and state.gpu == GAMING
+
+
+def test_nothing_resident_is_not_loaded():
+    state = ollama_state(ps(), gpu=lambda: QUIET)
+    assert state.up and not state.loaded and state.gpu == QUIET
