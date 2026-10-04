@@ -14,14 +14,12 @@ from typing import Any
 
 from .config import Config
 from .device import DeviceError
-from .effects import MANAGED_KEYS, Inputs, build_frame
-from .sources import LLAMA_DOWN, LlamaState, net_rate, token_rate
+from .effects import Inputs, build_frame, managed_keys, power_state
+from .keymap import key_id
+from .sources import LLAMA_DOWN, OLLAMA_DOWN, net_rate
+from .trackers import LlamaTracker, OllamaTracker
 
 log = logging.getLogger(__name__)
-
-# The server evaluates the prompt in batches and answers /slots between them, so
-# progress arrives in lumps seconds apart. Blinking holds this long after the last one.
-PROMPT_ADVANCE_HOLD_S = 6.0
 
 
 class Daemon:
@@ -30,15 +28,14 @@ class Daemon:
         self._keyboard = keyboard
         self._power = power
         self._config = config
-        self._inputs = Inputs(llama=LLAMA_DOWN, token_rate=0.0, net_bytes_per_s=0.0, temp_c=None, muted=False)
+        self._inputs = Inputs(net_bytes_per_s=0.0, temp_c=None, muted=False)
+        self._trackers = {
+            key_id(light.key): LlamaTracker() if light.kind == "llama" else OllamaTracker()
+            for light in config.lights
+        }
         self._last_fast: float | None = None
         self._last_slow: float | None = None
-        self._prev_decoded = 0
         self._prev_net: tuple[int, float] | None = None
-        self._prompt_done: int | None = None
-        self._prompt_mark = 0.0  # when the prompt counter last moved, or reading began
-        self._prompt_advanced_at: float | None = None
-        self._prompt_rate = 0.0
         self._backlight: str | None = None
 
     def tick(self, now: float) -> None:
@@ -65,28 +62,26 @@ class Daemon:
         except DeviceError as exc:
             log.warning("keyboard update failed: %s", exc)
         try:
-            self._power.update(self._inputs.llama, now)
+            self._power.update(power_state(self._inputs.lights), now)
         except DeviceError as exc:
             log.warning("power button update failed: %s", exc)
 
     def shutdown(self) -> None:
         try:
-            self._keyboard.update({key: self._config.base_color for key in MANAGED_KEYS})
+            self._keyboard.update({key: self._config.base_color for key in managed_keys(self._trackers)})
             self._power.restore()
         except DeviceError as exc:
             log.warning("restore failed: %s", exc)
 
     def _poll_fast(self, now: float) -> None:
-        llama = self._safe(self._sources.llama, LLAMA_DOWN, "inference server")
-        previous = self._inputs
-        if llama.up and not llama.answered and previous.llama.up:
-            # A busy server stops answering /slots; its last reading is the best evidence.
-            llama, rate = previous.llama, previous.token_rate
-        else:
-            dt = now - self._last_fast if self._last_fast is not None else 0.0
-            rate = token_rate(self._prev_decoded, llama.decoded, dt) if llama.processing else 0.0
-            self._prev_decoded = llama.decoded
-            self._track_prompt(llama, now)
+        dt = now - self._last_fast if self._last_fast is not None else 0.0
+        lights = {}
+        for light in self._config.lights:
+            key = key_id(light.key)
+            down = LLAMA_DOWN if light.kind == "llama" else OLLAMA_DOWN
+            state = self._safe(lambda name=light.key: self._sources.inference(name), down, f"{light.key} inference")
+            tracker = self._trackers[key]
+            lights[key] = tracker.update(state, now, dt) if light.kind == "llama" else tracker.update(state, now)
 
         cur_bytes = self._safe(self._sources.net_bytes, None, "network counters")
         net = 0.0
@@ -96,30 +91,7 @@ class Daemon:
             self._prev_net = (cur_bytes, now)
 
         self._backlight = self._safe(self._sources.backlight_state, None, "backlight state")
-        advancing = self._prompt_advanced_at is not None and now - self._prompt_advanced_at <= PROMPT_ADVANCE_HOLD_S
-        self._inputs = dataclasses.replace(
-            previous,
-            llama=llama,
-            token_rate=rate,
-            net_bytes_per_s=net,
-            prompt_rate=self._prompt_rate if llama.reading else 0.0,
-            prompt_advancing=llama.reading and advancing,
-        )
-
-    def _track_prompt(self, llama: LlamaState, now: float) -> None:
-        """Turns the prompt-evaluated counter into a smoothed tokens-per-second rate."""
-        done = llama.prompt_done
-        if not llama.reading or done is None:
-            self._prompt_done, self._prompt_advanced_at, self._prompt_rate = None, None, 0.0
-            return
-        if self._prompt_done is None or done < self._prompt_done:  # reading began, or a new request
-            self._prompt_done, self._prompt_mark, self._prompt_advanced_at, self._prompt_rate = done, now, None, 0.0
-        elif done > self._prompt_done:
-            elapsed = now - self._prompt_mark
-            if elapsed > 0:
-                sample = (done - self._prompt_done) / elapsed
-                self._prompt_rate = sample if self._prompt_rate == 0 else (self._prompt_rate + sample) / 2
-            self._prompt_done, self._prompt_mark, self._prompt_advanced_at = done, now, now
+        self._inputs = dataclasses.replace(self._inputs, net_bytes_per_s=net, lights=lights)
 
     def _poll_slow(self) -> None:
         temp = self._safe(self._sources.cpu_temp, None, "cpu temperature")

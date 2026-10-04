@@ -1,13 +1,16 @@
 """Readers for the values the lights show. Parsing is pure; the readers do I/O."""
 from __future__ import annotations
 
+import functools
 import json
+import re
 import subprocess
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 GetJson = Callable[..., Any]
 CPU_SENSORS = {"coretemp", "k10temp"}
@@ -27,9 +30,17 @@ class LlamaState:
     prompt_done: int | None = None
     # False when a loaded model's /slots did not answer, which happens while it is busy.
     answered: bool = True
+    # With several slots, whether any one of them is reading its prompt. A generating slot
+    # must not hide another slot's prompt, so this is decided per slot; None means
+    # "work it out from decoded and the prompt counters" (single-slot readings).
+    prompt_phase: bool | None = None
+    # The largest prompt_done of any busy slot. Compaction is judged per slot, never summed.
+    peak_prompt_done: int | None = None
 
     @property
     def reading(self) -> bool:
+        if self.prompt_phase is not None:
+            return self.processing and self.prompt_phase
         # A busy slot that has produced no tokens yet is reading the prompt, until
         # the whole prompt is evaluated and only the first token is pending.
         if not (self.processing and self.decoded == 0):
@@ -40,6 +51,22 @@ class LlamaState:
 
 
 LLAMA_DOWN = LlamaState(up=False, processing=False, decoded=0)
+
+
+@dataclass(frozen=True)
+class OllamaState:
+    """Ollama reports which models are loaded, not whether one is busy."""
+
+    up: bool
+    loaded: bool  # a chat model is loaded; embedding models are ignored
+    touched: float | None  # latest expiry among chat models; it moves when a request finishes
+    answered: bool = True
+
+
+OLLAMA_DOWN = OllamaState(up=False, loaded=False, touched=None)
+# Embedders such as the fleet's bge-m3 stay loaded all day and are not inference.
+EMBEDDING_MODEL = re.compile(r"bge|embed|nomic|minilm|mxbai|e5-|gte-", re.IGNORECASE)
+_EXCESS_FRACTION = re.compile(r"(\.\d{6})\d+")
 
 
 def parse_net_bytes(text: str) -> int:
@@ -79,8 +106,10 @@ def _is_timeout(exc: BaseException) -> bool:
     return isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
 
 
-def llama_state(get_json: GetJson) -> LlamaState:
-    """Reads /slots for loaded models only: querying an unloaded one would autoload it."""
+def llama_state(get_json: GetJson, only_model: str | None = None) -> LlamaState:
+    """Reads /slots for loaded models only: querying an unloaded one would autoload it.
+
+    only_model limits the reading to one model of a router."""
     try:
         models = get_json("/v1/models")["data"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -88,10 +117,11 @@ def llama_state(get_json: GetJson) -> LlamaState:
             return LlamaState(up=True, processing=False, decoded=0, answered=False)
         return LLAMA_DOWN
 
-    processing, decoded, answered = False, 0, True
-    prompt_new = prompt_done = 0
-    has_prompt = False
+    answered = True
+    rows: list[tuple[int, int | None, int | None]] = []  # busy slots: (decoded, prompt_new, prompt_done)
     for model in models:
+        if only_model is not None and model.get("id") != only_model:
+            continue
         if model.get("status", {}).get("value") != "loaded":
             continue
         try:
@@ -100,23 +130,63 @@ def llama_state(get_json: GetJson) -> LlamaState:
             answered = answered and not _is_timeout(exc)
             continue
         for slot in slots:
-            busy = bool(slot.get("is_processing"))
-            processing = processing or busy
-            decoded += _slot_decoded(slot)
             # An idle slot keeps its last task's counters, so only a busy one is read.
+            if not slot.get("is_processing"):
+                continue
             total, processed = slot.get("n_prompt_tokens"), slot.get("n_prompt_tokens_processed")
-            if busy and isinstance(total, int) and isinstance(processed, int):
-                has_prompt = True
-                prompt_new += max(0, total - int(slot.get("n_prompt_tokens_cache") or 0))
-                prompt_done += processed
+            has_prompt = isinstance(total, int) and isinstance(processed, int)
+            new = max(0, total - int(slot.get("n_prompt_tokens_cache") or 0)) if has_prompt else None
+            rows.append((_slot_decoded(slot), new, processed if has_prompt else None))
+    return _merge_slots(rows, answered)
+
+
+def _merge_slots(rows: list[tuple[int, int | None, int | None]], answered: bool) -> LlamaState:
+    """One state for a server whose slots may be doing different things at once."""
+    if not rows:
+        return LlamaState(up=True, processing=False, decoded=0, answered=answered)
+
+    def is_reading(row) -> bool:
+        decoded, new, done = row
+        return decoded == 0 and (new is None or done is None or done < new)
+
+    reading = [row for row in rows if is_reading(row)]
+    with_prompt = [row for row in rows if row[2] is not None]
+    prompt_new = prompt_done = peak = None
+    if with_prompt:
+        peak = max(row[2] for row in with_prompt)
+        shown = [row for row in reading if row[2] is not None] or [max(with_prompt, key=lambda row: row[2])]
+        prompt_new = sum(row[1] for row in shown)
+        prompt_done = sum(row[2] for row in shown)
     return LlamaState(
         up=True,
-        processing=processing,
-        decoded=decoded,
-        prompt_new=prompt_new if has_prompt else None,
-        prompt_done=prompt_done if has_prompt else None,
+        processing=True,
+        decoded=sum(row[0] for row in rows),
+        prompt_new=prompt_new,
+        prompt_done=prompt_done,
         answered=answered,
+        prompt_phase=bool(reading),
+        peak_prompt_done=peak,
     )
+
+
+def parse_expires_at(text: str) -> float | None:
+    """Ollama stamps expiry with nanoseconds, which datetime does not accept."""
+    try:
+        return datetime.fromisoformat(_EXCESS_FRACTION.sub(r"\1", text)).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def ollama_state(get_json: GetJson) -> OllamaState:
+    try:
+        models = get_json("/api/ps")["models"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        if _is_timeout(exc):
+            return OllamaState(up=True, loaded=False, touched=None, answered=False)
+        return OLLAMA_DOWN
+    chat = [m for m in models if not EMBEDDING_MODEL.search(str(m.get("name", "")))]
+    stamps = [t for t in (parse_expires_at(str(m.get("expires_at", ""))) for m in chat) if t is not None]
+    return OllamaState(up=True, loaded=bool(chat), touched=max(stamps) if stamps else None)
 
 
 def read_backlight_state(path: str | Path) -> str | None:
@@ -160,15 +230,15 @@ def make_http_get(base_url: str, timeout: float = 1.0) -> GetJson:
 class Sources:
     """The real readers, bundled behind the methods the daemon calls."""
 
-    def __init__(self, llama_get: GetJson | None, backlight_path: str | None = None):
-        self._llama_get = llama_get
+    def __init__(self, readers: Mapping[str, Callable[[], Any]], backlight_path: str | None = None):
+        self._readers = readers
         self._backlight_path = backlight_path
 
     def backlight_state(self) -> str | None:
         return read_backlight_state(self._backlight_path) if self._backlight_path else None
 
-    def llama(self) -> LlamaState:
-        return llama_state(self._llama_get) if self._llama_get else LLAMA_DOWN
+    def inference(self, name: str) -> Any:
+        return self._readers[name]()
 
     def net_bytes(self) -> int:
         return parse_net_bytes(Path("/proc/net/dev").read_text())
@@ -182,3 +252,14 @@ class Sources:
             capture_output=True, text=True, timeout=2, check=False,
         )
         return parse_mic_muted(result.stdout)
+
+
+def build_sources(lights, backlight_path: str | None) -> Sources:
+    """One reader per configured light; llama.cpp and Ollama servers answer differently."""
+    readers: dict[str, Callable[[], Any]] = {}
+    for light in lights:
+        if light.kind == "llama":
+            readers[light.key] = functools.partial(llama_state, make_http_get(light.url, 1.0), light.model)
+        else:
+            readers[light.key] = functools.partial(ollama_state, make_http_get(light.url, 2.0))
+    return Sources(readers, backlight_path)

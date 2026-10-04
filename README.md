@@ -9,7 +9,23 @@ and lighting chip `187c:0550`).
 | ESC | Network traffic on this machine. Faint blue when idle, blinks with traffic (up to `KEYLIGHTS_ESC_BLINK_CAP` blinks/s). |
 | F1-F4 | CPU temperature. Green at 45 C through yellow to red at 90 C. |
 | F5 | Red while the default microphone is muted. |
-| Power button | Inference server state as a steady colour: green up, amber reading a prompt, off down. |
+| Power button | Summary of the inference lights as a steady colour: green when any server is up, amber while any llama.cpp server reads a prompt, off when none is up. |
+
+Inference lights are configured per key with `KEYLIGHTS_LIGHTS`, a comma-separated list of
+`KEY=kind:url[#model]`:
+
+    KEYLIGHTS_LIGHTS=DEL=llama:http://host:8080#model,HOME=ollama:http://host:11434
+
+- `llama` reads a llama.cpp server's slots and shows every state described above. `#model`
+  limits it to one model of a router. A server running several slots is read slot by slot:
+  a prompt being read on any slot shows as reading, and compaction is judged on the largest
+  slot, never on the sum.
+- `ollama` shows green while a chat model is loaded and pulses white when a request finishes.
+  Ollama reports no busy state. Embedding models are ignored, and the key is dark when no
+  chat model is loaded or the server is unreachable.
+- `KEYLIGHTS_LLAMA_URL` alone still means "DEL shows this llama.cpp server".
+- ESC and F1-F5 belong to the status lights and cannot be used. Keys that are not configured
+  keep the keyboard's own colours.
 
 On exit the managed keys return to `KEYLIGHTS_BASE_COLOR` and the power button to green.
 

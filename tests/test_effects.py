@@ -1,5 +1,10 @@
 from keylights.effects import (
     AMBER,
+    WHITE,
+    InferenceInput,
+    OllamaInput,
+    ollama_color,
+    power_state,
     GREEN,
     OFF,
     RED,
@@ -14,7 +19,8 @@ from keylights.effects import (
     prompt_blink_rate,
     temp_color,
 )
-from keylights.sources import LlamaState
+from keylights.keymap import key_id
+from keylights.sources import LlamaState, OllamaState
 
 BASE = (255, 255, 255)
 UP_IDLE = LlamaState(up=True, processing=False, decoded=0)
@@ -129,7 +135,10 @@ def test_f5_red_only_when_muted():
 
 
 def inputs(**overrides):
-    values = dict(llama=UP_IDLE, token_rate=0.0, net_bytes_per_s=0.0, temp_c=45.0, muted=False)
+    """The legacy single-light arguments describe the DEL light."""
+    light = {k: overrides.pop(k) for k in ("llama", "token_rate", "prompt_rate", "prompt_advancing") if k in overrides}
+    state = light.pop("llama", UP_IDLE)
+    values = dict(net_bytes_per_s=0.0, temp_c=45.0, muted=False, lights={key_id("DEL"): InferenceInput(state, **light)})
     values.update(overrides)
     return Inputs(**values)
 
@@ -197,3 +206,89 @@ def test_frame_below_the_compaction_threshold_keeps_the_prompt_blink():
     assert colors == {AMBER, OFF}
     steady = build_frame(inputs(llama=READING_PROMPT), 0.7, BASE, compact_tokens=12288, compact_blink=10.0)
     assert steady[15] == AMBER
+
+
+OLLAMA_LOADED = OllamaState(up=True, loaded=True, touched=1.0)
+OLLAMA_EMPTY = OllamaState(up=True, loaded=False, touched=None)
+OLLAMA_DOWN = OllamaState(up=False, loaded=False, touched=None)
+
+
+def test_ollama_light_is_green_while_a_chat_model_is_loaded():
+    assert ollama_color(OLLAMA_LOADED, pulse=False) == GREEN
+
+
+def test_ollama_light_is_dark_when_nothing_is_loaded_or_the_server_is_down():
+    assert ollama_color(OLLAMA_EMPTY, pulse=False) == OFF
+    assert ollama_color(OLLAMA_DOWN, pulse=False) == OFF
+
+
+def test_ollama_light_pulses_white_when_a_request_finishes():
+    assert ollama_color(OLLAMA_LOADED, pulse=True) == WHITE
+
+
+def lights_frame(t, **frame_args):
+    lights = {
+        key_id("F12"): OllamaInput(OLLAMA_LOADED, pulse=False),
+        key_id("HOME"): OllamaInput(OLLAMA_LOADED, pulse=True),
+        key_id("END"): InferenceInput(READING_PROMPT, prompt_rate=400.0, prompt_advancing=True),
+        key_id("DEL"): InferenceInput(DECODING, token_rate=8.0),
+    }
+    return build_frame(inputs(lights=lights), t, BASE, **frame_args)
+
+
+def test_each_light_key_shows_its_own_source():
+    frame = lights_frame(0.05)
+    assert frame[key_id("F12")] == GREEN
+    assert frame[key_id("HOME")] == WHITE
+    assert frame[key_id("END")] == AMBER  # prompt blink, on-phase
+    assert frame[key_id("DEL")] == GREEN  # token flicker, on-phase
+
+
+def test_light_keys_blink_independently_of_each_other():
+    frame = lights_frame(0.15)
+    assert frame[key_id("END")] == OFF and frame[key_id("DEL")] == OFF
+    assert frame[key_id("F12")] == GREEN and frame[key_id("HOME")] == WHITE
+
+
+def test_dim_boost_also_lifts_the_light_keys():
+    plain = build_frame(inputs(lights={key_id("END"): InferenceInput(READING)}), 0.0, BASE)
+    boosted = build_frame(inputs(lights={key_id("END"): InferenceInput(READING)}), 0.0, BASE, boost=1.6)
+    assert plain[key_id("END")] == AMBER and boosted[key_id("END")] == (255, 224, 0)
+
+
+def test_frame_has_only_the_status_keys_when_no_lights_are_configured():
+    frame = build_frame(inputs(lights={}), 0.0, BASE)
+    assert set(frame) == {0, 1, 2, 3, 4, 5}
+
+
+def test_frame_adds_exactly_the_configured_light_keys():
+    assert set(lights_frame(0.0)) == {0, 1, 2, 3, 4, 5, 12, 13, 14, 15}
+
+
+def test_power_state_reads_prompt_when_any_inference_light_is_reading():
+    lights = {key_id("END"): InferenceInput(READING_PROMPT), key_id("DEL"): InferenceInput(DECODING)}
+    state = power_state(lights)
+    assert state.up and state.reading
+
+
+def test_power_state_is_up_when_any_light_is_up_and_none_is_reading():
+    lights = {key_id("HOME"): OllamaInput(OLLAMA_DOWN, pulse=False), key_id("END"): InferenceInput(UP_IDLE)}
+    state = power_state(lights)
+    assert state.up and not state.reading
+
+
+def test_power_state_counts_a_loaded_ollama_model_as_up():
+    state = power_state({key_id("HOME"): OllamaInput(OLLAMA_LOADED, pulse=False)})
+    assert state.up and not state.reading
+
+
+def test_power_state_is_down_when_every_light_is_down_or_none_exist():
+    assert not power_state({}).up
+    assert not power_state({key_id("HOME"): OllamaInput(OLLAMA_DOWN, pulse=False), key_id("END"): InferenceInput(DOWN)}).up
+
+
+def test_compaction_looks_at_the_largest_slot_when_the_state_carries_one():
+    big_slot = LlamaState(up=True, processing=True, decoded=5, prompt_new=300, prompt_done=100, peak_prompt_done=15000)
+    small_slots = LlamaState(up=True, processing=True, decoded=5, prompt_new=300, prompt_done=100, peak_prompt_done=9800)
+    assert is_compaction(big_slot, 12288)
+    assert not is_compaction(small_slots, 12288)

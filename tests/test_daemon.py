@@ -1,8 +1,8 @@
 from keylights.config import load_config
 from keylights.daemon import Daemon
 from keylights.device import DeviceError
-from keylights.effects import AMBER, GREEN, NET_IDLE
-from keylights.sources import LlamaState
+from keylights.effects import AMBER, GREEN, NET_IDLE, WHITE
+from keylights.sources import LlamaState, OllamaState
 
 BASE = (255, 255, 255)
 UP_IDLE = LlamaState(up=True, processing=False, decoded=0)
@@ -19,6 +19,7 @@ class FakeSources:
         self.temp_value = 45.0
         self.mic_value = False
         self.backlight_value = None
+        self.light_values = {}  # per-light overrides; DEL falls back to llama_value
 
     def backlight_state(self):
         return self._get(self.backlight_value)
@@ -28,8 +29,10 @@ class FakeSources:
             raise value
         return value
 
-    def llama(self):
-        return self._get(self.llama_value)
+    def inference(self, name):
+        # Like the real readers, an Ollama light answers with an Ollama state.
+        default = OllamaState(up=True, loaded=False, touched=None) if name in ("HOME", "F12") else self.llama_value
+        return self._get(self.light_values.get(name, default))
 
     def net_bytes(self):
         return self._get(self.net_value)
@@ -65,8 +68,11 @@ class FakePower:
         self.restored = True
 
 
-def make_daemon():
-    config = load_config({"KEYLIGHTS_BASE_COLOR": "ffffff", "KEYLIGHTS_POLL_INTERVAL": "0"})
+def make_daemon(env=None):
+    # The legacy single URL makes DEL the inference light, as before.
+    config = load_config(
+        {"KEYLIGHTS_BASE_COLOR": "ffffff", "KEYLIGHTS_POLL_INTERVAL": "0", "KEYLIGHTS_LLAMA_URL": "http://fake.example", **(env or {})}
+    )
     sources, keyboard, power = FakeSources(), FakeKeyboard(), FakePower()
     return Daemon(sources, keyboard, power, config), sources, keyboard, power
 
@@ -200,3 +206,88 @@ def test_del_returns_to_green_when_the_compaction_job_ends():
     daemon.tick(now=0.0)
     sources.llama_value = UP_IDLE
     assert collect_del(daemon, keyboard, 1.0, 1.3) == {GREEN}
+
+
+LIGHTS_ENV = {"KEYLIGHTS_LIGHTS": "F12=ollama:http://a.example,HOME=ollama:http://b.example,END=llama:http://c.example,DEL=llama:http://d.example"}
+F12, HOME, END, DEL = 12, 13, 14, 15
+
+
+def test_each_light_reads_its_own_source():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    sources.light_values = {"END": reading(0), "DEL": UP_IDLE, "HOME": OllamaState(True, True, 100.0), "F12": OllamaState(True, False, None)}
+    daemon.tick(now=0.0)
+    frame = keyboard.frames[-1]
+    assert frame[END] == AMBER and frame[DEL] == GREEN and frame[HOME] == GREEN and frame[F12] == (0, 0, 0)
+
+
+def test_prompt_progress_blinks_only_the_light_whose_prompt_is_advancing():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    sources.light_values = {"END": reading(0), "DEL": reading(0)}
+    daemon.tick(now=0.0)
+    sources.light_values = {"END": reading(2048), "DEL": reading(0)}
+    first = len(keyboard.frames)
+    t = 1.0
+    while t <= 1.5:
+        daemon.tick(now=t)
+        t += 0.01
+    frames = keyboard.frames[first:]
+    assert {f[END] for f in frames} == {AMBER, (0, 0, 0)}
+    assert {f[DEL] for f in frames} == {AMBER}
+
+
+def test_an_unanswered_poll_keeps_only_that_lights_last_state():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    sources.light_values = {"END": reading(0), "DEL": reading(0)}
+    daemon.tick(now=0.0)
+    sources.light_values = {
+        "END": LlamaState(up=True, processing=False, decoded=0, answered=False),
+        "DEL": UP_IDLE,
+    }
+    daemon.tick(now=0.5)
+    frame = keyboard.frames[-1]
+    assert frame[END] == AMBER and frame[DEL] == GREEN
+
+
+def test_ollama_light_pulses_white_after_a_request_finishes_then_settles():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    sources.light_values = {"HOME": OllamaState(True, True, 100.0)}
+    daemon.tick(now=0.0)
+    assert keyboard.frames[-1][HOME] == GREEN
+
+    sources.light_values = {"HOME": OllamaState(True, True, 101.0)}  # expiry moved: a request finished
+    daemon.tick(now=1.0)
+    assert keyboard.frames[-1][HOME] == WHITE
+    daemon.tick(now=3.0)
+    assert keyboard.frames[-1][HOME] == GREEN
+
+
+def test_ollama_light_does_not_pulse_when_a_model_first_appears():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    sources.light_values = {"HOME": OllamaState(True, False, None)}
+    daemon.tick(now=0.0)
+    sources.light_values = {"HOME": OllamaState(True, True, 500.0)}
+    daemon.tick(now=1.0)
+    assert keyboard.frames[-1][HOME] == GREEN
+
+
+def test_a_light_whose_source_fails_goes_dark_without_stopping_the_others():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    sources.light_values = {"END": OSError("down"), "HOME": OSError("down"), "DEL": UP_IDLE}
+    daemon.tick(now=0.0)
+    frame = keyboard.frames[-1]
+    assert frame[END] == (0, 0, 0) and frame[HOME] == (0, 0, 0) and frame[DEL] == GREEN
+
+
+def test_shutdown_restores_the_status_keys_and_every_configured_light():
+    daemon, _, keyboard, power = make_daemon(LIGHTS_ENV)
+    daemon.tick(now=0.0)
+    daemon.shutdown()
+    assert keyboard.frames[-1] == {k: BASE for k in (0, 1, 2, 3, 4, 5, F12, HOME, END, DEL)}
+    assert power.restored
+
+
+def test_power_button_follows_any_light_reading_a_prompt():
+    daemon, sources, _, power = make_daemon(LIGHTS_ENV)
+    sources.light_values = {"END": reading(0), "DEL": UP_IDLE}
+    daemon.tick(now=0.0)
+    assert power.states[-1].reading

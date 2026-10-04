@@ -1,7 +1,9 @@
 import re
 from pathlib import Path
 
-from keylights.config import load_config
+import pytest
+
+from keylights.config import LightSpec, load_config
 
 
 def test_endpoints_come_from_env_and_no_default_url_is_hardcoded():
@@ -40,3 +42,43 @@ def test_compaction_threshold_and_flash_rate_have_defaults_and_overrides():
     assert config.compact_tokens == 12288 and config.compact_blink == 10.0
     tuned = load_config({"KEYLIGHTS_COMPACT_TOKENS": "20000", "KEYLIGHTS_COMPACT_BLINK": "6"})
     assert tuned.compact_tokens == 20000 and tuned.compact_blink == 6.0
+
+
+def test_lights_spec_maps_keys_to_sources_with_an_optional_model():
+    config = load_config({"KEYLIGHTS_LIGHTS": "END=llama:http://h.example:8080#fn-1, HOME=ollama:https://o.example:8476 ,F12=ollama:http://x.example:11434"})
+    assert config.lights == (
+        LightSpec("END", "llama", "http://h.example:8080", "fn-1"),
+        LightSpec("HOME", "ollama", "https://o.example:8476", None),
+        LightSpec("F12", "ollama", "http://x.example:11434", None),
+    )
+
+
+def test_legacy_llama_url_becomes_the_del_light():
+    assert load_config({"KEYLIGHTS_LLAMA_URL": "http://h.example:8080"}).lights == (
+        LightSpec("DEL", "llama", "http://h.example:8080", None),
+    )
+
+
+def test_lights_spec_takes_precedence_over_the_legacy_url():
+    config = load_config({"KEYLIGHTS_LLAMA_URL": "http://old.example", "KEYLIGHTS_LIGHTS": "END=llama:http://new.example"})
+    assert [light.key for light in config.lights] == ["END"]
+
+
+def test_no_lights_are_configured_by_default():
+    assert load_config({}).lights == ()
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "DEL=http://x.example",  # no kind
+        "NOPE=llama:http://x.example",  # unknown key
+        "DEL=gpu:http://x.example",  # unknown kind
+        "DEL=llama:http://a.example,DEL=llama:http://b.example",  # duplicate key
+        "ESC=llama:http://x.example",  # keys the status lights already own
+        "F3=ollama:http://x.example",
+    ],
+)
+def test_bad_lights_specs_are_rejected(spec):
+    with pytest.raises(ValueError):
+        load_config({"KEYLIGHTS_LIGHTS": spec})

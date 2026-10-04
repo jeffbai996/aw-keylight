@@ -2,9 +2,12 @@ import pytest
 
 from keylights.sources import (
     LlamaState,
+    OllamaState,
     cpu_temp_c,
     llama_state,
     net_rate,
+    ollama_state,
+    parse_expires_at,
     parse_mic_muted,
     parse_net_bytes,
     read_backlight_state,
@@ -35,8 +38,10 @@ class FakeLlama:
         raise AssertionError(path)
 
 
-def slot(processing, decoded, n_prompt=None, processed=None, cache=0):
+def slot(processing, decoded, n_prompt=None, processed=None, cache=0, sid=None):
     value = {"is_processing": processing, "next_token": [{"n_decoded": decoded}]}
+    if sid is not None:
+        value["id"] = sid
     if n_prompt is not None:
         value.update(n_prompt_tokens=n_prompt, n_prompt_tokens_processed=processed, n_prompt_tokens_cache=cache)
     return value
@@ -207,3 +212,113 @@ def test_cpu_temp_is_none_without_a_cpu_sensor(tmp_path):
 def test_mic_muted_parsed_from_wpctl_output():
     assert parse_mic_muted("Volume: 1.00 [MUTED]\n") is True
     assert parse_mic_muted("Volume: 1.00\n") is False
+
+
+def test_llama_state_can_be_limited_to_one_model_of_a_router():
+    get = FakeLlama({"a": "loaded", "b": "loaded"}, {"a": [slot(True, 5)], "b": [slot(True, 90)]})
+    state = llama_state(get, only_model="a")
+    assert state.decoded == 5
+    assert [p["model"] for path, p in get.calls if path == "/slots"] == ["a"]
+
+
+def test_llama_state_for_a_model_that_is_not_loaded_is_up_and_idle():
+    get = FakeLlama({"a": "loaded", "b": "unloaded"}, {"a": [slot(True, 5)]})
+    state = llama_state(get, only_model="b")
+    assert state.up and not state.processing
+
+
+PS_CHAT = {"name": "qwen3.8:27b-mtp-q4_K_M", "expires_at": "2026-10-04T23:17:05.218197081-07:00"}
+PS_EMBED = {"name": "bge-m3:batch4k", "expires_at": "2026-10-04T23:15:57.184440012-07:00"}
+
+
+def ps(*models):
+    return lambda path, params=None: {"models": list(models)}
+
+
+def test_ollama_expiry_timestamp_parses_with_nanoseconds_and_offset():
+    from datetime import datetime, timedelta, timezone
+
+    expected = datetime(2026, 10, 4, 23, 17, 5, 218197, tzinfo=timezone(timedelta(hours=-7))).timestamp()
+    assert parse_expires_at(PS_CHAT["expires_at"]) == pytest.approx(expected)
+    assert parse_expires_at("not a time") is None
+
+
+def test_ollama_with_a_chat_model_loaded_reports_loaded_and_its_expiry():
+    state = ollama_state(ps(PS_CHAT))
+    assert state.up and state.loaded
+    assert state.touched == parse_expires_at(PS_CHAT["expires_at"])
+
+
+def test_ollama_embedding_models_do_not_count_as_inference():
+    state = ollama_state(ps(PS_EMBED))
+    assert state.up and not state.loaded and state.touched is None
+
+
+def test_ollama_expiry_comes_from_the_chat_model_only():
+    state = ollama_state(ps(PS_EMBED, PS_CHAT))
+    assert state.loaded and state.touched == parse_expires_at(PS_CHAT["expires_at"])
+
+
+def test_ollama_unreachable_reports_down():
+    def get(path, params=None):
+        raise ConnectionRefusedError("refused")
+
+    assert not ollama_state(get).up
+
+
+def test_ollama_timeout_is_busy_not_down():
+    def get(path, params=None):
+        raise TimeoutError("timed out")
+
+    state = ollama_state(get)
+    assert state.up and not state.answered
+
+
+def model_with(*slots):
+    return FakeLlama({"m": "loaded"}, {"m": list(slots)})
+
+
+def reading_slot(done=1000, new=3000, sid=0):
+    return slot(True, 0, n_prompt=new + 500, processed=done, cache=500, sid=sid)
+
+
+def generating_slot(decoded=332, done=9800, sid=1):
+    return slot(True, decoded, n_prompt=done + 500, processed=done, cache=500, sid=sid)
+
+
+def test_a_server_with_two_slots_reads_a_prompt_while_the_other_slot_generates():
+    state = llama_state(model_with(reading_slot(), generating_slot()))
+    assert state.processing and state.reading
+    assert state.decoded == 332
+
+
+def test_prompt_progress_follows_the_reading_slot_not_the_generating_one():
+    state = llama_state(model_with(reading_slot(done=1000, new=3000), generating_slot(done=9800)))
+    assert (state.prompt_new, state.prompt_done) == (3000, 1000)
+
+
+def test_peak_prompt_is_the_largest_slot_so_two_slots_never_add_up_to_a_compaction():
+    state = llama_state(model_with(reading_slot(done=4000, new=6000), generating_slot(done=9800)))
+    assert state.peak_prompt_done == 9800  # not 13800
+
+
+def test_two_slots_reading_together_add_their_progress():
+    state = llama_state(model_with(reading_slot(done=1000, new=3000, sid=0), reading_slot(done=500, new=2000, sid=1)))
+    assert state.reading and (state.prompt_new, state.prompt_done) == (5000, 1500)
+
+
+def test_a_slot_waiting_for_its_first_token_is_not_reading_even_beside_a_generating_slot():
+    waiting = slot(True, 0, n_prompt=3500, processed=3000, cache=500, sid=0)
+    state = llama_state(model_with(waiting, generating_slot()))
+    assert state.processing and not state.reading
+
+
+def test_an_idle_slots_stale_token_count_does_not_hide_the_other_slots_prompt():
+    stale_idle = slot(False, 800, n_prompt=9000, processed=8000, cache=500, sid=1)
+    state = llama_state(model_with(reading_slot(sid=0), stale_idle))
+    assert state.reading and state.decoded == 0
+
+
+def test_two_slots_without_prompt_fields_read_when_any_busy_slot_has_no_tokens():
+    state = llama_state(model_with(slot(True, 0, sid=0), slot(True, 40, sid=1)))
+    assert state.reading and state.decoded == 40 and state.peak_prompt_done is None

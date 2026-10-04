@@ -5,12 +5,30 @@ import os
 from dataclasses import dataclass
 from typing import Mapping
 
+from .keymap import UnknownKeyError, key_id
+
 Color = tuple[int, int, int]
+
+
+LIGHT_KINDS = ("llama", "ollama")
+# Keys the status lights already drive; a light cannot claim them.
+RESERVED_KEYS = frozenset({"ESC", "F1", "F2", "F3", "F4", "F5"})
+
+
+@dataclass(frozen=True)
+class LightSpec:
+    """One inference light: which key shows which server, optionally one router model."""
+
+    key: str
+    kind: str
+    url: str
+    model: str | None = None
 
 
 @dataclass(frozen=True)
 class Config:
     llama_url: str | None
+    lights: tuple[LightSpec, ...]
     base_color: Color
     del_blink_cap: float
     esc_blink_cap: float
@@ -32,9 +50,42 @@ def _hex_color(value: str) -> Color:
     return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
 
 
+def parse_lights(text: str) -> tuple[LightSpec, ...]:
+    """KEY=kind:url[#model], comma separated, e.g. END=llama:http://host:8080#model."""
+    lights: list[LightSpec] = []
+    for entry in (part.strip() for part in text.split(",")):
+        if not entry:
+            continue
+        name, has_eq, source = entry.partition("=")
+        kind, has_kind, location = source.partition(":")
+        if not (has_eq and has_kind and location.strip()):
+            raise ValueError(f"Light '{entry}': expected KEY=kind:url")
+        key, kind = name.strip().upper(), kind.strip().lower()
+        if kind not in LIGHT_KINDS:
+            raise ValueError(f"Light '{entry}': kind must be one of {', '.join(LIGHT_KINDS)}")
+        try:
+            key_id(key)
+        except UnknownKeyError as exc:
+            raise ValueError(str(exc)) from None
+        if key in RESERVED_KEYS:
+            raise ValueError(f"Light '{entry}': {key} is used by a status light")
+        if any(light.key == key for light in lights):
+            raise ValueError(f"Light '{entry}': {key} is configured twice")
+        url, _, model = location.strip().partition("#")
+        lights.append(LightSpec(key, kind, url, model or None))
+    return tuple(lights)
+
+
 def load_config(env: Mapping[str, str]) -> Config:
+    llama_url = env.get("KEYLIGHTS_LLAMA_URL") or None
+    spec = env.get("KEYLIGHTS_LIGHTS")
+    if spec:
+        lights = parse_lights(spec)
+    else:  # the single-server setting from before per-key lights
+        lights = (LightSpec("DEL", "llama", llama_url),) if llama_url else ()
     return Config(
-        llama_url=env.get("KEYLIGHTS_LLAMA_URL") or None,
+        llama_url=llama_url,
+        lights=lights,
         base_color=_hex_color(env.get("KEYLIGHTS_BASE_COLOR", "ffffff")),
         del_blink_cap=float(env.get("KEYLIGHTS_DEL_BLINK_CAP", "20")),
         esc_blink_cap=float(env.get("KEYLIGHTS_ESC_BLINK_CAP", "10")),

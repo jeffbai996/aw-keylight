@@ -13,7 +13,7 @@ from .config import load_config
 from .daemon import Daemon, run
 from .device import HidrawTransport, Keyboard
 from .elc import HidrawElcTransport, PowerButton
-from .sources import Sources, make_http_get
+from .sources import build_sources
 
 
 def main() -> None:
@@ -25,9 +25,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     config = load_config(os.environ)
 
-    llama_get = make_http_get(config.llama_url) if config.llama_url else None
     daemon = Daemon(
-        Sources(llama_get, config.backlight_state_path),
+        build_sources(config.lights, config.backlight_state_path),
         Keyboard(HidrawTransport()),
         PowerButton(HidrawElcTransport(), config.power_zone),
         config,
