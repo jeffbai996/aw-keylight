@@ -336,3 +336,17 @@ def test_an_event_counter_that_restarts_reads_as_no_new_events_not_a_burst():
         colors.add(keyboard.frames[-1][HOME])
         t += 0.01
     assert colors == {GREEN}
+
+
+def test_del_goes_green_once_a_large_prompt_has_been_read_and_tokens_flow():
+    daemon, sources, keyboard, _ = make_daemon({"KEYLIGHTS_POLL_INTERVAL": "0.5"})
+    sources.llama_value = compaction_reading(15000)
+    daemon.tick(now=0.0)
+    sources.llama_value = LlamaState(up=True, processing=True, decoded=40, prompt_new=30000, prompt_done=30000)
+    colors = set()
+    t = 0.5
+    while t < 0.9:
+        daemon.tick(now=t)
+        colors.add(keyboard.frames[-1][15])
+        t += 0.01
+    assert AMBER not in colors and GREEN in colors

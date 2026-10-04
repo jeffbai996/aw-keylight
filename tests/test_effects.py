@@ -176,14 +176,21 @@ def test_del_flashes_amber_fast_while_a_compaction_sized_prompt_is_read():
     assert del_color(COMPACT_READING, 10.0, 0.07, compaction=True) == OFF
 
 
-def test_del_stays_solid_amber_for_the_first_token_wait_of_a_compaction():
-    assert del_color(COMPACT_AWAITING, 0.0, 0.3, compaction=True) == AMBER
-    assert del_color(COMPACT_AWAITING, 0.0, 0.7, compaction=True) == AMBER
+def test_del_is_green_for_the_first_token_wait_even_after_a_large_prompt():
+    assert del_color(COMPACT_AWAITING, 0.0, 0.3, compaction=True) == GREEN
+    assert del_color(COMPACT_AWAITING, 0.0, 0.7, compaction=True) == GREEN
 
 
-def test_del_flickers_amber_with_tokens_while_a_compaction_generates():
-    assert del_color(COMPACT_DECODING, 4.0, 0.05, compaction=True) == AMBER
+def test_del_flickers_green_not_amber_while_a_large_job_generates():
+    assert del_color(COMPACT_DECODING, 4.0, 0.05, compaction=True) == GREEN
     assert del_color(COMPACT_DECODING, 4.0, 0.15, compaction=True) == OFF
+
+
+def test_amber_never_appears_outside_reading_for_any_job_size():
+    for state in (COMPACT_AWAITING, COMPACT_DECODING, DECODING, AWAITING_TOKEN, UP_IDLE):
+        for t in (0.0, 0.05, 0.15, 0.3, 0.7):
+            for compaction in (False, True):
+                assert del_color(state, 4.0, t, compaction=compaction) != AMBER
 
 
 def test_frame_compaction_flash_ignores_prompt_speed():
@@ -334,3 +341,9 @@ def test_frame_blinks_a_light_from_its_event_rate_and_cap():
     light = OllamaInput(live(in_flight=1), pulse=False, event_rate=8.0)
     on, off = (build_frame(inputs(lights={key_id("HOME"): light}), t, BASE)[key_id("HOME")] for t in (0.05, 0.15))
     assert (on, off) == (GREEN, OFF)
+
+
+def test_frame_shows_green_flicker_for_a_large_job_that_is_generating():
+    live = inputs(llama=COMPACT_DECODING, token_rate=8.0)
+    colors = {build_frame(live, t / 100, BASE, compact_tokens=12288, compact_blink=10.0)[15] for t in range(40)}
+    assert colors == {GREEN, OFF}

@@ -104,15 +104,15 @@ def is_compaction(state: LlamaState, threshold: float) -> bool:
 def del_color(
     state: LlamaState, rate: float, t: float, prompt_advancing: bool = False, compaction: bool = False
 ) -> Color:
-    """Amber while the prompt is read (blinking while it advances), then green:
-    steady for the first-token wait and when done, flickering while generating.
-    A compaction-sized job stays amber for its whole run: `rate` flashes it while the
-    prompt is read and flickers it with tokens afterwards; a zero rate is steady."""
+    """Amber means a prompt is being read, and only that. A large prompt (`compaction`)
+    flashes at `rate`; an ordinary one blinks while it advances and holds steady when it
+    stalls. Once the prompt is read the key is green: steady for the first-token wait and
+    when idle or done, flickering with generated tokens, whatever the job's size."""
     if not state.up:
         return OFF
-    if compaction and state.processing:
-        return AMBER if blink_on(rate, t) else OFF
     if state.reading:
+        if compaction:
+            return AMBER if blink_on(rate, t) else OFF
         return OFF if prompt_advancing and not blink_on(rate, t) else AMBER
     if state.processing and not blink_on(rate, t):
         return OFF
