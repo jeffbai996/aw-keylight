@@ -37,7 +37,7 @@ Every inference light uses the same colours:
   their rate. `#gpu=<telemetry url>@<host>` adds the host's GPU activity, which shows work the
   gate cannot see, such as embeddings and whisper, as green flicker, and its gamemode flag. Any resident model, an embedder included, counts as
   loaded: nothing resident is dark, which on a host with a pinned embedder is the abnormal state.
-  The speed of the GPU flicker follows power draw: about 6 flickers a second at a quarter of
+  A card counts as working only when it is out of its idle performance state and drawing at least a fifth of its power limit, because some cards park in a high state at low power. The speed of the GPU flicker follows power draw: about 6 flickers a second at a quarter of
   idle-to-limit power, 16 at 140 W of a 350 W limit, capped at `KEYLIGHTS_DEL_BLINK_CAP`. A host silent for 5 seconds goes red, because with Ollama
   stopped the gate hangs instead of refusing on a WSL host with mirrored networking. The
   overlay also carries the host's gamemode flag: Ollama stopped for gaming is dark, not red. A host in

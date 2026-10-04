@@ -362,7 +362,9 @@ def test_frame_shows_green_flicker_for_a_large_job_that_is_generating():
 
 GPU_IDLE = GpuState(up=True, power_w=37.0, limit_w=350.0, pstate="P8")
 GPU_BURST = GpuState(up=True, power_w=140.0, limit_w=350.0, pstate="P2")
-GPU_TAIL = GpuState(up=True, power_w=54.0, limit_w=350.0, pstate="P5")
+GPU_TAIL = GpuState(up=True, power_w=80.0, limit_w=350.0, pstate="P5")
+# A card that parks in P1 at low power with a model resident and nothing running.
+GPU_PARKED_HIGH = GpuState(up=True, power_w=92.0, limit_w=575.0, pstate="P1")
 
 
 def test_gpu_light_is_steady_baby_blue_while_the_card_idles():
@@ -379,6 +381,11 @@ def test_gpu_light_is_red_when_the_host_is_down():
 
 def test_gpu_flicker_speeds_up_with_power_draw():
     assert gpu_blink_rate(GPU_BURST, 25.0) > gpu_blink_rate(GPU_TAIL, 25.0) > 0
+
+
+def test_a_card_parked_in_a_high_pstate_at_low_power_reads_as_idle():
+    assert gpu_blink_rate(GPU_PARKED_HIGH, 25.0) == 0
+    assert {gpu_color(GPU_PARKED_HIGH, t / 10) for t in range(10)} == {BABY_BLUE}
 
 
 def test_gpu_flicker_is_capped():

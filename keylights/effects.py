@@ -22,7 +22,7 @@ NET_DIP: Color = (0, 10, 20)  # ESC's dip with traffic. Dark is kept for "no int
 TOKENS_PER_BLINK = 2.0
 PROMPT_TOKENS_PER_BLINK = 100.0
 GPU_IDLE_PSTATE = "P8"
-GPU_IDLE_POWER_SHARE = 0.15  # with no pstate reported, below this share of the power limit the card is idle
+GPU_IDLE_POWER_SHARE = 0.2  # below this share of the power limit the card is idle, whatever its pstate: some park in P1
 GPU_BLINKS_AT_FULL_POWER = 40.0
 MIN_GPU_BLINK = 2.0  # a card that is working has to read as flickering, not steady
 OLLAMA_AWAITING_BLINK = 4.0  # blinks a second while a gate waits for a request's first event
@@ -179,7 +179,7 @@ def gpu_blink_rate(state: GpuState, cap: float = 20.0) -> float:
     if not state.up or state.power_w is None or not state.limit_w:
         return 0.0
     share = state.power_w / state.limit_w
-    active = state.pstate != GPU_IDLE_PSTATE if state.pstate else share >= GPU_IDLE_POWER_SHARE
+    active = share >= GPU_IDLE_POWER_SHARE and state.pstate != GPU_IDLE_PSTATE
     if not active:
         return 0.0
     return min(cap, max(MIN_GPU_BLINK, share * GPU_BLINKS_AT_FULL_POWER))
