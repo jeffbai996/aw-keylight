@@ -1,5 +1,6 @@
 from keylights.effects import (
     AMBER,
+    boost_color,
     BABY_BLUE,
     GpuInput,
     gpu_blink_rate,
@@ -119,7 +120,7 @@ def test_dim_boost_scales_only_esc_and_del_and_caps_at_full_channel():
     plain = build_frame(inputs(temp_c=45.0), 0.0, BASE)
     boosted = build_frame(inputs(temp_c=45.0), 0.0, BASE, boost=1.6)
     assert boosted[0] == tuple(min(255, round(c * 1.6)) for c in plain[0])
-    assert boosted[15] == (160, 255, 255)  # baby blue lifted, channels capped at 255
+    assert boosted[15] == boost_color(BABY_BLUE, 1.6)  # the idle colour is lifted like the rest
     assert {k: boosted[k] for k in (1, 2, 3, 4, 5)} == {k: plain[k] for k in (1, 2, 3, 4, 5)}
 
 

@@ -15,7 +15,7 @@ RED: Color = (255, 0, 0)
 WHITE: Color = (255, 255, 255)
 # Idle: the host is up and nothing is running, whether its model is loaded or parked. Dark is kept
 # for a vacant GPU: gamemode, or a server that is down.
-BABY_BLUE: Color = (100, 180, 255)
+BABY_BLUE: Color = (30, 110, 255)
 NET_IDLE: Color = (0, 10, 20)
 NET_ACTIVE: Color = (0, 170, 255)
 
