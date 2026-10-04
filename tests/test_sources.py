@@ -373,10 +373,10 @@ def telemetry(*hosts):
     return lambda path, params=None: {"hosts": list(hosts)}
 
 
-def host_entry(name="host-a", ok=True, state="healthy", age=0.5, gpus=None):
+def host_entry(name="host-a", ok=True, state="healthy", age=0.5, gpus=None, gamemode=False):
     if gpus is None:
         gpus = [{"power_draw_w": 37.0, "power_limit_w": 350.0, "pstate": "P8", "utilization_pct": 1.0}]
-    return {"host": name, "ok": ok, "sample_state": state, "sample_age_sec": age, "gpu": gpus}
+    return {"host": name, "ok": ok, "sample_state": state, "sample_age_sec": age, "gpu": gpus, "gamemode": gamemode}
 
 
 def test_gpu_state_reads_power_limit_and_pstate_of_the_named_host():
@@ -473,3 +473,32 @@ def test_the_gpu_overlay_is_read_even_when_no_chat_model_is_loaded():
 ])
 def test_networkmanager_connectivity_decides_whether_the_internet_is_up(text, online):
     assert parse_connectivity(text) is online
+
+
+def test_gpu_state_carries_the_hosts_gamemode_flag():
+    assert gpu_state(telemetry(host_entry(gamemode=True)), "host-a").gamemode is True
+    assert gpu_state(telemetry(host_entry(gamemode=False)), "host-a").gamemode is False
+
+
+def test_a_host_in_gamemode_is_up_even_with_no_gpu_reading():
+    state = gpu_state(telemetry(host_entry(gpus=[], gamemode=True)), "host-a")
+    assert state.up and state.gamemode
+
+
+GAMING = GpuState(up=True, power_w=30.0, limit_w=450.0, pstate="P8", gamemode=True)
+
+
+def test_the_gpu_overlay_survives_ollama_being_unreachable_so_gamemode_can_be_told_from_an_outage():
+    def stopped(path, params=None):
+        raise ConnectionRefusedError("ollama stopped")
+
+    state = ollama_state(stopped, gpu=lambda: GAMING)
+    assert not state.up and state.gpu == GAMING
+
+
+def test_the_gpu_overlay_is_kept_when_ollama_is_merely_silent():
+    def slow(path, params=None):
+        raise TimeoutError("busy")
+
+    state = ollama_state(slow, gpu=lambda: GAMING)
+    assert state.up and not state.answered and state.gpu == GAMING

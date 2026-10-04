@@ -20,8 +20,9 @@ Every inference light uses the same colours:
 
 | Colour | Meaning |
 |---|---|
-| Dark | The host is unreachable, or its GPU is vacant (gamemode stops Ollama). |
-| Baby blue | Idle: the host is up and nothing is running, whether its model is loaded or parked. It is the same blue as a lit ESC. |
+| Red | The host is unreachable. |
+| Dark | Unloaded: the host is up with no model loaded, or it is in gamemode and its GPU has been handed to a game. |
+| Baby blue | Idle: the model is loaded and nothing is running. |
 | Amber | A prompt is being read, and only that. It blinks at a rate that follows prompt speed, holds steady when progress stalls, and flashes at `KEYLIGHTS_COMPACT_BLINK` when the prompt is large (`KEYLIGHTS_COMPACT_TOKENS` or more uncached tokens). |
 | Steady green | The prompt is read and the first token is pending. |
 | Green flicker | Working: flickering with generated tokens, or with the GPU's power draw. |
@@ -34,12 +35,13 @@ Every inference light uses the same colours:
   comes from the gate in front of it (`GET /_gate/activity` on an ollama-gate): while a request
   has streamed nothing yet the key blinks amber, and while events stream it flickers green at
   their rate. `#gpu=<telemetry url>@<host>` adds the host's GPU activity, which shows work the
-  gate cannot see, such as embeddings and whisper, as green flicker. Embedding models are not
-  counted as a loaded chat model. A host silent for 5 seconds goes dark, because with Ollama
-  stopped the gate hangs instead of refusing on a WSL host with mirrored networking.
+  gate cannot see, such as embeddings and whisper, as green flicker, and its gamemode flag. Embedding models are not
+  counted as a loaded chat model. A host silent for 5 seconds goes red, because with Ollama
+  stopped the gate hangs instead of refusing on a WSL host with mirrored networking. The
+  overlay also carries the host's gamemode flag: Ollama stopped for gaming is dark, not red.
 - `gpu` shows only a host's GPU, from a fleet status server's `/api/telemetry`. The URL is that
   server's base and `#host` names the host, for example
-  `HOME=gpu:https://status.example/squad#host-a`. Power draw and performance state are used
+  `HOME=gpu:https://status.example/squad#host-a`. Gamemode is dark and an unreachable host is red. Power draw and performance state are used
   because utilisation, sampled coarsely, misses short bursts.
 - `KEYLIGHTS_LLAMA_URL` alone still means "DEL shows this llama.cpp server".
 - ESC and F1-F5 belong to the status lights and cannot be used. Keys that are not configured

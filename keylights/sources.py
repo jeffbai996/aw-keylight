@@ -88,6 +88,8 @@ class GpuState:
     limit_w: float | None
     pstate: str | None  # P8 is the idle state
     answered: bool = True
+    # The host's GPU has been handed to a game. Ollama is stopped then, which must not read as an outage.
+    gamemode: bool = False
 
 
 GPU_DOWN = GpuState(up=False, power_w=None, limit_w=None, pstate=None)
@@ -212,9 +214,10 @@ def ollama_state(get_json: GetJson, gpu: Callable[[], GpuState] | None = None) -
     try:
         models = get_json("/api/ps")["models"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
+        # The overlay is read either way: it is what tells gamemode (Ollama stopped on purpose) from an outage.
         if _is_timeout(exc):
-            return OllamaState(up=True, loaded=False, touched=None, answered=False)
-        return OLLAMA_DOWN
+            return OllamaState(up=True, loaded=False, touched=None, answered=False, gpu=_overlay(gpu))
+        return OllamaState(up=False, loaded=False, touched=None, gpu=_overlay(gpu))
     chat = [m for m in models if not EMBEDDING_MODEL.search(str(m.get("name", "")))]
     stamps = [t for t in (parse_expires_at(str(m.get("expires_at", ""))) for m in chat) if t is not None]
     in_flight, awaiting, events = _gate_activity(get_json) if chat else (None, None, None)
@@ -259,11 +262,15 @@ def gpu_state(get_json: GetJson, host: str) -> GpuState:
     age = entry.get("sample_age_sec")
     if not isinstance(age, (int, float)) or age > GPU_MAX_SAMPLE_AGE_S:
         return GPU_DOWN
+    gamemode = bool(entry.get("gamemode"))
     cards = [card for card in entry.get("gpu") or [] if isinstance(card, dict)]
     if not cards:
-        return GpuState(up=True, power_w=None, limit_w=None, pstate=None)
+        return GpuState(up=True, power_w=None, limit_w=None, pstate=None, gamemode=gamemode)
     card = max(cards, key=lambda c: c.get("power_draw_w") or 0.0)
-    return GpuState(up=True, power_w=card.get("power_draw_w"), limit_w=card.get("power_limit_w"), pstate=card.get("pstate"))
+    return GpuState(
+        up=True, power_w=card.get("power_draw_w"), limit_w=card.get("power_limit_w"), pstate=card.get("pstate"),
+        gamemode=gamemode,
+    )
 
 
 def parse_connectivity(text: str) -> bool:

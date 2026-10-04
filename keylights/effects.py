@@ -13,10 +13,10 @@ GREEN: Color = (0, 255, 0)
 AMBER: Color = (255, 140, 0)
 RED: Color = (255, 0, 0)
 WHITE: Color = (255, 255, 255)
-# Idle: the host is up and nothing is running, whether its model is loaded or parked. Dark is kept
-# for a vacant GPU: gamemode, or a server that is down.
-BABY_BLUE: Color = (0, 170, 255)
-NET_LIT: Color = BABY_BLUE  # ESC while the internet is up: the same blue the idle lights use
+# Idle: the host is up with its model loaded and nothing is running.
+BABY_BLUE: Color = (0, 30, 255)
+# ESC while the internet is up. Its own blue, separate from the idle lights'.
+NET_LIT: Color = (0, 170, 255)
 NET_DIP: Color = (0, 10, 20)  # ESC's dip with traffic. Dark is kept for "no internet".
 
 TOKENS_PER_BLINK = 2.0
@@ -120,16 +120,17 @@ def del_color(
     """Amber means a prompt is being read, and only that. A large prompt (`compaction`)
     flashes at `rate`; an ordinary one blinks while it advances and holds steady when it
     stalls. Once the prompt is read the key is green while the job runs: steady for the
-    first-token wait, flickering with generated tokens. Idle is baby blue, dark is unreachable."""
+    first-token wait, flickering with generated tokens. Idle with the model loaded is baby
+    blue, an unloaded model is dark, and an unreachable server is red."""
     if not state.up:
-        return OFF
+        return RED
     if state.reading:
         if compaction:
             return AMBER if blink_on(rate, t) else OFF
         return OFF if prompt_advancing and not blink_on(rate, t) else AMBER
     if state.processing:
         return GREEN if blink_on(rate, t) else OFF
-    return BABY_BLUE
+    return BABY_BLUE if state.loaded else OFF
 
 
 def esc_color(rate: float, t: float, online: bool = True) -> Color:
@@ -154,10 +155,13 @@ def ollama_color(
     """Ollama light, in the same language as the llama one. A chat request through the gate:
     amber blink while its prompt is read, green flicker with streamed events (about one per
     token). Otherwise, if a GPU overlay says the card is working (embeddings, whisper): green
-    flicker. Otherwise baby blue, with a white pulse as a request finishes. Dark only when the
-    server is unreachable, which is what gamemode looks like since it stops Ollama."""
-    if not state.up:
+    flicker. Otherwise baby blue when a chat model is loaded (white for a moment as a request
+    finishes) and dark when none is. Red when the server is unreachable. Gamemode, which stops
+    Ollama on purpose, is dark: the card has been handed to a game."""
+    if state.gpu is not None and state.gpu.gamemode:
         return OFF
+    if not state.up:
+        return RED
     if state.in_flight:
         if state.awaiting:
             return AMBER if blink_on(OLLAMA_AWAITING_BLINK, t) else OFF
@@ -165,7 +169,9 @@ def ollama_color(
     working = gpu_blink_rate(state.gpu, cap) if state.gpu else 0.0
     if working > 0:
         return GREEN if blink_on(working, t) else OFF
-    return WHITE if pulse else BABY_BLUE
+    if pulse:
+        return WHITE
+    return BABY_BLUE if state.loaded else OFF
 
 
 def gpu_blink_rate(state: GpuState, cap: float = 20.0) -> float:
@@ -181,9 +187,11 @@ def gpu_blink_rate(state: GpuState, cap: float = 20.0) -> float:
 
 def gpu_color(state: GpuState, t: float, cap: float = 20.0) -> Color:
     """Baby blue while the host's GPU idles, green flickering while it works. There is no read
-    phase to show, so there is no amber. Dark when the host cannot be reached."""
-    if not state.up:
+    phase to show, so there is no amber. Dark in gamemode, red when the host cannot be reached."""
+    if state.gamemode:
         return OFF
+    if not state.up:
+        return RED
     rate = gpu_blink_rate(state, cap)
     if rate <= 0:
         return BABY_BLUE

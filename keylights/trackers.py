@@ -1,6 +1,8 @@
 """Turns successive readings of one server into what its key shows. No I/O."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .effects import GpuInput, InferenceInput, OllamaInput
 from .sources import OLLAMA_DOWN, GpuState, LlamaState, OllamaState, token_rate
 
@@ -77,9 +79,10 @@ class OllamaTracker:
             if self._silent_since is None:
                 self._silent_since = now
             if last is not None and last.state.up and now - self._silent_since < OLLAMA_SILENCE_GRACE_S:
-                state, rate = last.state, last.event_rate
+                state, rate = replace(last.state, gpu=state.gpu), last.event_rate
             else:
-                state, rate = OLLAMA_DOWN, 0.0
+                # The latest GPU reading is kept: it says whether the silence is gamemode or an outage.
+                state, rate = replace(OLLAMA_DOWN, gpu=state.gpu), 0.0
                 self._touched = self._events = None
         else:
             self._silent_since = None
