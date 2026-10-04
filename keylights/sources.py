@@ -95,6 +95,8 @@ class GpuState:
 GPU_DOWN = GpuState(up=False, power_w=None, limit_w=None, pstate=None)
 # A host whose last probe is older than this is not trusted to be showing the card now.
 GPU_MAX_SAMPLE_AGE_S = 30.0
+# A host in gamemode is sampled about once a minute, to leave its card alone.
+GAMEMODE_MAX_SAMPLE_AGE_S = 180.0
 # Embedders such as the fleet's bge-m3 stay loaded all day and are not inference.
 EMBEDDING_MODEL = re.compile(r"bge|embed|nomic|minilm|mxbai|e5-|gte-", re.IGNORECASE)
 _EXCESS_FRACTION = re.compile(r"(\.\d{6})\d+")
@@ -262,9 +264,10 @@ def gpu_state(get_json: GetJson, host: str) -> GpuState:
     if entry is None or not entry.get("ok") or entry.get("sample_state") != "healthy":
         return GPU_DOWN
     age = entry.get("sample_age_sec")
-    if not isinstance(age, (int, float)) or age > GPU_MAX_SAMPLE_AGE_S:
-        return GPU_DOWN
     gamemode = bool(entry.get("gamemode"))
+    limit = GAMEMODE_MAX_SAMPLE_AGE_S if gamemode else GPU_MAX_SAMPLE_AGE_S
+    if not isinstance(age, (int, float)) or age > limit:
+        return GPU_DOWN
     cards = [card for card in entry.get("gpu") or [] if isinstance(card, dict)]
     if not cards:
         return GpuState(up=True, power_w=None, limit_w=None, pstate=None, gamemode=gamemode)

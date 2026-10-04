@@ -486,6 +486,17 @@ def test_a_host_in_gamemode_is_up_even_with_no_gpu_reading():
     assert state.up and state.gamemode
 
 
+def test_a_host_in_gamemode_stays_gamemode_between_its_slow_samples():
+    # A gamemode host is sampled about once a minute, so its sample is normally older than the
+    # freshness limit of a working one; that must not turn gamemode into an outage.
+    state = gpu_state(telemetry(host_entry(gpus=[], gamemode=True, age=55.0)), "host-a")
+    assert state.up and state.gamemode
+
+
+def test_a_gamemode_sample_older_than_a_few_polls_is_down():
+    assert not gpu_state(telemetry(host_entry(gpus=[], gamemode=True, age=400.0)), "host-a").up
+
+
 GAMING = GpuState(up=True, power_w=30.0, limit_w=450.0, pstate="P8", gamemode=True)
 
 
