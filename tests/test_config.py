@@ -104,3 +104,8 @@ def test_an_ollama_light_can_overlay_a_hosts_gpu_activity():
 def test_a_malformed_ollama_gpu_overlay_is_rejected(selector):
     with pytest.raises(ValueError):
         load_config({"KEYLIGHTS_LIGHTS": f"HOME=ollama:https://o.example#{selector}"})
+
+
+def test_reset_interval_defaults_to_a_minute_and_zero_means_every_update():
+    assert load_config({}).reset_interval == 60.0
+    assert load_config({"KEYLIGHTS_RESET_INTERVAL": "0"}).reset_interval == 0.0

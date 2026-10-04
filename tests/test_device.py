@@ -125,3 +125,60 @@ def test_a_failed_write_says_how_long_it_blocked():
     keyboard = Keyboard(FakeTransport(fail_after=1), clock=lambda: next(times))
     with pytest.raises(DeviceError, match=r"after 5\.2s"):
         keyboard.update({15: RED})
+
+
+def resets(transport):
+    return [r for r in transport.sent if r[1] == 0x94]
+
+
+def test_reset_is_sent_with_the_first_update_and_not_with_every_one():
+    transport = FakeTransport()
+    keyboard = Keyboard(transport, clock=lambda: 0.0, reset_interval=60.0)
+    keyboard.update({15: RED})
+    keyboard.update({15: GREEN})
+    keyboard.update({15: BLUE})
+    assert len(resets(transport)) == 1 and transport.sent[0][1] == 0x94
+    assert len(transport.color_packets()) == 3  # every colour change still goes out
+
+
+def test_reset_is_sent_again_once_the_interval_has_passed():
+    now = [0.0]
+    transport = FakeTransport()
+    keyboard = Keyboard(transport, clock=lambda: now[0], reset_interval=60.0)
+    keyboard.update({15: RED})
+    now[0] = 30.0
+    keyboard.update({15: GREEN})
+    assert len(resets(transport)) == 1
+    now[0] = 61.0
+    keyboard.update({15: BLUE})
+    assert len(resets(transport)) == 2
+
+
+def test_reset_is_sent_again_after_a_failed_write_to_resync_the_controller():
+    class FlakyTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.fail_next_color = False
+
+        def send(self, report):
+            if self.fail_next_color and report[1] == 0x8C and report[2] == 0x02:
+                self.fail_next_color = False
+                raise OSError("stalled")
+            super().send(report)
+
+    transport = FlakyTransport()
+    keyboard = Keyboard(transport, clock=lambda: 0.0, reset_interval=60.0)
+    keyboard.update({15: RED})
+    transport.fail_next_color = True
+    with pytest.raises(DeviceError):
+        keyboard.update({15: GREEN})
+    keyboard.update({15: GREEN})  # the retry
+    assert len(resets(transport)) == 2  # the first update, and the retry after the failure
+
+
+def test_a_zero_interval_resets_on_every_update_as_before():
+    transport = FakeTransport()
+    keyboard = Keyboard(transport, clock=lambda: 0.0, reset_interval=0.0)
+    keyboard.update({15: RED})
+    keyboard.update({15: GREEN})
+    assert len(resets(transport)) == 2

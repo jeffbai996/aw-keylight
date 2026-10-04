@@ -42,6 +42,7 @@ class Config:
     backlight_state_path: str
     compact_tokens: int
     compact_blink: float
+    reset_interval: float
 
 
 DEFAULT_BACKLIGHT_STATE = "~/.local/state/kbd-light/state"
@@ -109,4 +110,5 @@ def load_config(env: Mapping[str, str]) -> Config:
         backlight_state_path=os.path.expanduser(env.get("KEYLIGHTS_BACKLIGHT_STATE", DEFAULT_BACKLIGHT_STATE)),
         compact_tokens=int(env.get("KEYLIGHTS_COMPACT_TOKENS", "12288")),
         compact_blink=float(env.get("KEYLIGHTS_COMPACT_BLINK", "10")),
+        reset_interval=float(env.get("KEYLIGHTS_RESET_INTERVAL", "60")),
     )

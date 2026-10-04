@@ -56,7 +56,9 @@ The backlight level is global, so while `kbd-light` is in dim mode ESC and DEL a
 (default `~/.local/state/kbd-light/state`).
 
 Blink caps and the render rate are `KEYLIGHTS_DEL_BLINK_CAP`, `KEYLIGHTS_ESC_BLINK_CAP` and
-`KEYLIGHTS_TICK_HZ`. The keyboard accepts about 110 updates a second, so a cap above 55 blinks/s
+`KEYLIGHTS_TICK_HZ`. `KEYLIGHTS_RESET_INTERVAL` (default 60) is how often the keyboard's reset
+command is sent: at the first update, after any failed write, then at most this many seconds
+apart. Zero sends it with every update. The keyboard accepts about 110 updates a second, so a cap above 55 blinks/s
 cannot be drawn.
 
 ## Setup

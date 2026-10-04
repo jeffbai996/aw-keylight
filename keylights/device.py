@@ -1,8 +1,8 @@
 """Per-key colour writes to the Darfon keyboard controller (0d62:0a1c).
 
 Commands go over the USB control pipe as HID feature reports: the interrupt
-endpoints on this controller do not respond. Sequence per update, as verified
-on hardware: reset, colour blocks, loop (8C 13), commit (8B 01 FF).
+endpoints on this controller do not respond. Sequence per update: [reset,] colour
+blocks, loop (8C 13), commit (8B 01 FF). Reset is sent on a schedule, see Keyboard.
 """
 from __future__ import annotations
 
@@ -53,27 +53,41 @@ def diff_frame(previous: dict[int, Color], new: dict[int, Color]) -> dict[int, C
 
 
 class Keyboard:
-    def __init__(self, transport: Transport, clock: Callable[[], float] = time.monotonic):
+    """reset_interval is how often to send the reset command: at the first update, after any failed
+    write (to resync the controller), and then at most this many seconds apart. Zero resets on
+    every update, as before. Colour changes do not need it: unchanged keys keep their colour, so
+    reset cannot be clearing them, and every transfer saved is one that cannot stall."""
+
+    def __init__(self, transport: Transport, clock: Callable[[], float] = time.monotonic, reset_interval: float = 60.0):
         self._transport = transport
         self._clock = clock
+        self._reset_interval = reset_interval
+        self._last_reset: float | None = None  # None: the controller's state is not known
         self._last: dict[int, Color] = {}
 
     def update(self, frame: dict[int, Color]) -> None:
         changed = diff_frame(self._last, frame)
         if not changed:
             return
-        colours = build_color_packets(changed)
-        steps = [("reset", _report(0x94))]
-        steps += [("colour", packet) for packet in colours]
-        steps += [("loop", _report(0x8C, 0x13)), ("update", _report(0x8B, 0x01, 0xFF))]
         started = self._clock()
+        reset = (
+            self._last_reset is None
+            or self._reset_interval <= 0
+            or started - self._last_reset >= self._reset_interval
+        )
+        steps = [("reset", _report(0x94))] if reset else []
+        steps += [("colour", packet) for packet in build_color_packets(changed)]
+        steps += [("loop", _report(0x8C, 0x13)), ("update", _report(0x8B, 0x01, 0xFF))]
         try:
             for step, report in steps:
                 self._transport.send(report)
         except OSError as exc:
+            self._last_reset = None  # the controller may be mid-sequence: start the next one clean
             # A control transfer that gets no answer blocks for seconds. Which step it was, and for
             # how long, is what tells a stalled controller from a slow one.
             raise DeviceError(f"Keyboard write failed at {step} after {self._clock() - started:.1f}s: {exc}") from exc
+        if reset:
+            self._last_reset = started
         # Recorded only after a full write, so a failed update is retried in full.
         self._last.update(changed)
 
