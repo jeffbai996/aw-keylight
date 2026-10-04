@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import fcntl
 import os
+import time
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .config import Color
 
@@ -52,20 +53,27 @@ def diff_frame(previous: dict[int, Color], new: dict[int, Color]) -> dict[int, C
 
 
 class Keyboard:
-    def __init__(self, transport: Transport):
+    def __init__(self, transport: Transport, clock: Callable[[], float] = time.monotonic):
         self._transport = transport
+        self._clock = clock
         self._last: dict[int, Color] = {}
 
     def update(self, frame: dict[int, Color]) -> None:
         changed = diff_frame(self._last, frame)
         if not changed:
             return
-        reports = [_report(0x94), *build_color_packets(changed), _report(0x8C, 0x13), _report(0x8B, 0x01, 0xFF)]
+        colours = build_color_packets(changed)
+        steps = [("reset", _report(0x94))]
+        steps += [("colour", packet) for packet in colours]
+        steps += [("loop", _report(0x8C, 0x13)), ("update", _report(0x8B, 0x01, 0xFF))]
+        started = self._clock()
         try:
-            for report in reports:
+            for step, report in steps:
                 self._transport.send(report)
         except OSError as exc:
-            raise DeviceError(f"Keyboard write failed: {exc}") from exc
+            # A control transfer that gets no answer blocks for seconds. Which step it was, and for
+            # how long, is what tells a stalled controller from a slow one.
+            raise DeviceError(f"Keyboard write failed at {step} after {self._clock() - started:.1f}s: {exc}") from exc
         # Recorded only after a full write, so a failed update is retried in full.
         self._last.update(changed)
 

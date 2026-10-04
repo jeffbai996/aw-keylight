@@ -111,3 +111,17 @@ def test_find_hidraw_matches_vid_pid_in_uevent(tmp_path):
         (device / "uevent").write_text(f"DRIVER=hid-generic\nHID_ID={hid_id}\n")
 
     assert find_hidraw(tmp_path) == "/dev/hidraw3"
+
+
+@pytest.mark.parametrize("fail_after, step", [(0, "reset"), (1, "colour"), (2, "loop"), (3, "update")])
+def test_a_failed_write_names_the_step_that_failed(fail_after, step):
+    keyboard = Keyboard(FakeTransport(fail_after=fail_after))
+    with pytest.raises(DeviceError, match=f"at {step}"):
+        keyboard.update({15: RED})
+
+
+def test_a_failed_write_says_how_long_it_blocked():
+    times = iter([100.0, 105.2])  # start of the update, then the moment the write gave up
+    keyboard = Keyboard(FakeTransport(fail_after=1), clock=lambda: next(times))
+    with pytest.raises(DeviceError, match=r"after 5\.2s"):
+        keyboard.update({15: RED})
