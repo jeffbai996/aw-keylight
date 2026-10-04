@@ -291,3 +291,48 @@ def test_power_button_follows_any_light_reading_a_prompt():
     sources.light_values = {"END": reading(0), "DEL": UP_IDLE}
     daemon.tick(now=0.0)
     assert power.states[-1].reading
+
+
+def gate_activity(in_flight=0, awaiting=0, events=0):
+    return OllamaState(True, True, 100.0, True, in_flight, awaiting, events)
+
+
+def test_ollama_light_blinks_amber_while_a_request_waits_for_its_first_event():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    sources.light_values = {"HOME": gate_activity(in_flight=1, awaiting=1, events=0)}
+    daemon.tick(now=0.0)
+    seen = set()
+    t = 0.0
+    while t < 0.5:
+        daemon.tick(now=t)
+        seen.add(keyboard.frames[-1][HOME])
+        t += 0.01
+    assert seen == {AMBER, (0, 0, 0)}
+
+
+def test_ollama_light_flicker_follows_the_event_counter():
+    daemon, sources, keyboard, _ = make_daemon({**LIGHTS_ENV, "KEYLIGHTS_POLL_INTERVAL": "0.5"})
+    sources.light_values = {"HOME": gate_activity(in_flight=1, events=100)}
+    daemon.tick(now=0.0)
+    sources.light_values = {"HOME": gate_activity(in_flight=1, events=140)}  # 40 events in 0.5 s
+    colors = set()
+    t = 0.5
+    while t < 1.0:
+        daemon.tick(now=t)
+        colors.add(keyboard.frames[-1][HOME])
+        t += 0.01
+    assert colors == {GREEN, (0, 0, 0)}
+
+
+def test_an_event_counter_that_restarts_reads_as_no_new_events_not_a_burst():
+    daemon, sources, keyboard, _ = make_daemon({**LIGHTS_ENV, "KEYLIGHTS_POLL_INTERVAL": "0.5"})
+    sources.light_values = {"HOME": gate_activity(in_flight=1, events=5000)}
+    daemon.tick(now=0.0)
+    sources.light_values = {"HOME": gate_activity(in_flight=1, events=3)}  # the gate restarted
+    colors = set()
+    t = 0.5
+    while t < 0.9:
+        daemon.tick(now=t)
+        colors.add(keyboard.frames[-1][HOME])
+        t += 0.01
+    assert colors == {GREEN}

@@ -322,3 +322,44 @@ def test_an_idle_slots_stale_token_count_does_not_hide_the_other_slots_prompt():
 def test_two_slots_without_prompt_fields_read_when_any_busy_slot_has_no_tokens():
     state = llama_state(model_with(slot(True, 0, sid=0), slot(True, 40, sid=1)))
     assert state.reading and state.decoded == 40 and state.peak_prompt_done is None
+
+
+def gate(ps_models, activity=None, activity_error=None):
+    """A fake client for an ollama-gate: /api/ps plus the optional /_gate/activity."""
+    def get(path, params=None):
+        if path == "/api/ps":
+            return {"models": list(ps_models)}
+        if path == "/_gate/activity":
+            if activity_error:
+                raise activity_error
+            return activity
+        raise AssertionError(path)
+    return get
+
+
+ACTIVITY = {"in_flight": 1, "awaiting_first_event": 1, "events_total": 40, "requests_total": 7}
+
+
+def test_ollama_state_carries_the_gates_live_activity():
+    state = ollama_state(gate([PS_CHAT], ACTIVITY))
+    assert (state.in_flight, state.awaiting, state.events) == (1, 1, 40)
+    assert state.up and state.loaded
+
+
+def test_ollama_state_without_the_activity_endpoint_still_reports_loaded():
+    import urllib.error
+
+    error = urllib.error.HTTPError("http://x/_gate/activity", 404, "not found", {}, None)
+    state = ollama_state(gate([PS_CHAT], activity_error=error))
+    assert state.up and state.loaded
+    assert (state.in_flight, state.awaiting, state.events) == (None, None, None)
+
+
+def test_a_slow_activity_endpoint_does_not_take_down_the_loaded_state():
+    state = ollama_state(gate([PS_CHAT], activity_error=TimeoutError("busy")))
+    assert state.up and state.loaded and state.in_flight is None
+
+
+def test_malformed_activity_is_ignored():
+    state = ollama_state(gate([PS_CHAT], {"in_flight": "many"}))
+    assert state.loaded and state.in_flight is None

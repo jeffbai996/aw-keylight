@@ -81,7 +81,7 @@ class Daemon:
             down = LLAMA_DOWN if light.kind == "llama" else OLLAMA_DOWN
             state = self._safe(lambda name=light.key: self._sources.inference(name), down, f"{light.key} inference")
             tracker = self._trackers[key]
-            lights[key] = tracker.update(state, now, dt) if light.kind == "llama" else tracker.update(state, now)
+            lights[key] = tracker.update(state, now, dt)
 
         cur_bytes = self._safe(self._sources.net_bytes, None, "network counters")
         net = 0.0

@@ -18,6 +18,7 @@ NET_ACTIVE: Color = (0, 170, 255)
 
 TOKENS_PER_BLINK = 2.0
 PROMPT_TOKENS_PER_BLINK = 100.0
+OLLAMA_AWAITING_BLINK = 4.0  # blinks a second while a gate waits for a request's first event
 MIN_PROMPT_BLINK = 2.0  # slow prompt progress still has to read as blinking, not steady
 BYTES_PER_BLINK = 10_000.0
 TEMP_LOW_C, TEMP_HIGH_C = 45.0, 90.0
@@ -40,6 +41,7 @@ class InferenceInput:
 class OllamaInput:
     state: OllamaState
     pulse: bool  # a request finished within the pulse window
+    event_rate: float = 0.0  # events streamed per second, from the gate's counter
 
 
 Light = Union[InferenceInput, OllamaInput]
@@ -130,10 +132,18 @@ def boost_color(color: Color, factor: float) -> Color:
     return min(255, round(r * factor)), min(255, round(g * factor)), min(255, round(b * factor))
 
 
-def ollama_color(state: OllamaState, pulse: bool) -> Color:
-    """Green while a chat model is loaded, white as a request finishes, dark otherwise."""
+def ollama_color(
+    state: OllamaState, pulse: bool, t: float = 0.0, event_rate: float = 0.0, cap: float = 20.0
+) -> Color:
+    """Ollama light. With the gate's live counters: amber blink while a prompt is read, green
+    flicker with streamed events (about one per token). Without them, or when idle: green
+    while a chat model is loaded and a white pulse as a request finishes. Dark otherwise."""
     if not (state.up and state.loaded):
         return OFF
+    if state.in_flight:
+        if state.awaiting:
+            return AMBER if blink_on(OLLAMA_AWAITING_BLINK, t) else OFF
+        return GREEN if blink_on(blink_rate(event_rate, cap), t) else OFF
     return WHITE if pulse else GREEN
 
 
@@ -186,7 +196,7 @@ def build_frame(
         if isinstance(light, InferenceInput):
             color = _inference_color(light, t, del_cap, compact_tokens, compact_blink)
         else:
-            color = ollama_color(light.state, light.pulse)
+            color = ollama_color(light.state, light.pulse, t, light.event_rate, del_cap)
         frame[key] = boost_color(color, boost)
     temp = base if inputs.temp_c is None else temp_color(inputs.temp_c)
     frame.update({key: temp for key in TEMP_KEYS})

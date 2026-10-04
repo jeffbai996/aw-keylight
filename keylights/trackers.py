@@ -56,21 +56,27 @@ class LlamaTracker:
 
 
 class OllamaTracker:
-    """Detects finished requests from the model expiry moving forward."""
+    """Detects finished requests from the model expiry moving forward, and turns the
+    gate's event counter into a rate."""
 
     def __init__(self) -> None:
         self._last: OllamaInput | None = None
         self._touched: float | None = None
+        self._events: int | None = None
         self._pulse_until = 0.0
 
-    def update(self, state: OllamaState, now: float) -> OllamaInput:
+    def update(self, state: OllamaState, now: float, dt: float = 0.0) -> OllamaInput:
         last = self._last
         if state.up and not state.answered and last is not None and last.state.up:
-            state = last.state  # a busy server stops answering; keep what it last said
+            state, rate = last.state, last.event_rate  # a busy server stops answering; keep what it last said
         else:
             # A model that has just appeared has no earlier expiry to compare, so it does not pulse.
             if state.touched is not None and self._touched is not None and state.touched > self._touched:
                 self._pulse_until = now + PULSE_S
             self._touched = state.touched
-        self._last = OllamaInput(state=state, pulse=now < self._pulse_until)
+            # A counter that went backwards means the gate restarted: no rate, not a burst.
+            grew = state.events is not None and self._events is not None and state.events >= self._events
+            rate = (state.events - self._events) / dt if grew and dt > 0 else 0.0
+            self._events = state.events
+        self._last = OllamaInput(state=state, pulse=now < self._pulse_until, event_rate=rate)
         return self._last

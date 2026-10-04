@@ -21,8 +21,11 @@ Inference lights are configured per key with `KEYLIGHTS_LIGHTS`, a comma-separat
   a prompt being read on any slot shows as reading, and compaction is judged on the largest
   slot, never on the sum.
 - `ollama` shows green while a chat model is loaded and pulses white when a request finishes.
-  Ollama reports no busy state. Embedding models are ignored, and the key is dark when no
-  chat model is loaded or the server is unreachable.
+  Ollama itself reports no busy state, so live activity comes from the gate in front of it
+  (`GET /_gate/activity` on an ollama-gate): while a request has streamed nothing yet the key
+  blinks amber, and while events stream it flickers green at their rate. Without that endpoint
+  the key shows only loaded and the finished-request pulse. Embedding models are ignored, and
+  the key is dark when no chat model is loaded or the server is unreachable.
 - `KEYLIGHTS_LLAMA_URL` alone still means "DEL shows this llama.cpp server".
 - ESC and F1-F5 belong to the status lights and cannot be used. Keys that are not configured
   keep the keyboard's own colours.

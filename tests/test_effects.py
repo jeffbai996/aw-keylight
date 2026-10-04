@@ -292,3 +292,45 @@ def test_compaction_looks_at_the_largest_slot_when_the_state_carries_one():
     small_slots = LlamaState(up=True, processing=True, decoded=5, prompt_new=300, prompt_done=100, peak_prompt_done=9800)
     assert is_compaction(big_slot, 12288)
     assert not is_compaction(small_slots, 12288)
+
+
+def live(in_flight=0, awaiting=0, events=None):
+    return OllamaState(up=True, loaded=True, touched=1.0, in_flight=in_flight, awaiting=awaiting, events=events)
+
+
+def test_ollama_light_blinks_amber_while_the_gate_waits_for_the_first_event():
+    state = live(in_flight=1, awaiting=1)
+    assert ollama_color(state, pulse=False, t=0.05) == AMBER
+    assert ollama_color(state, pulse=False, t=0.15) == OFF
+
+
+def test_ollama_light_flickers_green_with_streamed_events():
+    state = live(in_flight=1, awaiting=0)
+    assert ollama_color(state, pulse=False, t=0.05, event_rate=8.0) == GREEN
+    assert ollama_color(state, pulse=False, t=0.15, event_rate=8.0) == OFF
+
+
+def test_ollama_light_stays_green_while_streaming_with_no_new_events_yet():
+    assert ollama_color(live(in_flight=1), pulse=False, t=0.15, event_rate=0.0) == GREEN
+
+
+def test_ollama_light_flicker_is_capped():
+    state = live(in_flight=1)
+    assert ollama_color(state, pulse=False, t=0.2, event_rate=1000.0, cap=4.0) == OFF  # 4/s, off-phase
+    assert ollama_color(state, pulse=False, t=0.2, event_rate=1000.0, cap=50.0) == GREEN
+
+
+def test_ollama_light_pulses_white_only_when_idle():
+    assert ollama_color(live(in_flight=0), pulse=True) == WHITE
+    assert ollama_color(live(in_flight=1, awaiting=1), pulse=True, t=0.05) == AMBER
+
+
+def test_ollama_light_without_activity_data_behaves_as_before():
+    assert ollama_color(OLLAMA_LOADED, pulse=False, t=0.15, event_rate=5.0) == GREEN
+    assert ollama_color(OLLAMA_LOADED, pulse=True) == WHITE
+
+
+def test_frame_blinks_a_light_from_its_event_rate_and_cap():
+    light = OllamaInput(live(in_flight=1), pulse=False, event_rate=8.0)
+    on, off = (build_frame(inputs(lights={key_id("HOME"): light}), t, BASE)[key_id("HOME")] for t in (0.05, 0.15))
+    assert (on, off) == (GREEN, OFF)

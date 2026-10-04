@@ -61,6 +61,11 @@ class OllamaState:
     loaded: bool  # a chat model is loaded; embedding models are ignored
     touched: float | None  # latest expiry among chat models; it moves when a request finishes
     answered: bool = True
+    # Live activity, from an ollama-gate's /_gate/activity; None when the gate has no such
+    # endpoint, in which case the light falls back to loaded plus the finished-request pulse.
+    in_flight: int | None = None
+    awaiting: int | None = None  # in flight with nothing streamed back yet: the prompt is being read
+    events: int | None = None  # events streamed so far; only its growth means anything
 
 
 OLLAMA_DOWN = OllamaState(up=False, loaded=False, touched=None)
@@ -186,7 +191,24 @@ def ollama_state(get_json: GetJson) -> OllamaState:
         return OLLAMA_DOWN
     chat = [m for m in models if not EMBEDDING_MODEL.search(str(m.get("name", "")))]
     stamps = [t for t in (parse_expires_at(str(m.get("expires_at", ""))) for m in chat) if t is not None]
-    return OllamaState(up=True, loaded=bool(chat), touched=max(stamps) if stamps else None)
+    in_flight, awaiting, events = _gate_activity(get_json) if chat else (None, None, None)
+    return OllamaState(
+        up=True, loaded=bool(chat), touched=max(stamps) if stamps else None,
+        in_flight=in_flight, awaiting=awaiting, events=events,
+    )
+
+
+def _gate_activity(get_json: GetJson) -> tuple[int | None, int | None, int | None]:
+    """The gate's own request counters. A gate without the endpoint, or one too busy to
+    answer, just means no live signal: the loaded state still stands."""
+    try:
+        data = get_json("/_gate/activity")
+        values = (data["in_flight"], data["awaiting_first_event"], data["events_total"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, None, None
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in values):
+        return None, None, None
+    return values
 
 
 def read_backlight_state(path: str | Path) -> str | None:
