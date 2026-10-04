@@ -1,5 +1,8 @@
 from keylights.effects import (
     AMBER,
+    NET_DIP,
+    NET_LIT,
+    esc_color,
     boost_color,
     BABY_BLUE,
     GpuInput,
@@ -468,3 +471,27 @@ def test_every_kind_of_light_shares_one_vocabulary_idle_blue_working_green_unrea
         assert {color(idle, t / 100) for t in range(60)} == {BABY_BLUE}, kind
         assert {color(working, t / 100) for t in range(60)} == {GREEN, OFF}, kind
         assert {color(down, t / 100) for t in range(60)} == {OFF}, kind
+
+
+def test_esc_stays_lit_when_the_network_is_idle():
+    assert {esc_color(0.0, t / 10) for t in range(10)} == {NET_LIT}
+
+
+def test_esc_dips_to_dim_blue_with_traffic_and_is_lit_between_dips():
+    assert {esc_color(8.0, t / 100) for t in range(60)} == {NET_LIT, NET_DIP}
+
+
+def test_esc_is_dark_with_no_internet_whatever_the_traffic():
+    assert {esc_color(0.0, t / 10, online=False) for t in range(10)} == {OFF}
+    assert {esc_color(8.0, t / 100, online=False) for t in range(60)} == {OFF}
+
+
+def test_frame_darkens_only_esc_when_the_internet_is_down():
+    offline = build_frame(inputs(online=False), 0.0, BASE)
+    online = build_frame(inputs(), 0.0, BASE)
+    assert offline[0] == OFF and online[0] == NET_LIT
+    assert {k: offline[k] for k in offline if k != 0} == {k: online[k] for k in online if k != 0}
+
+
+def test_the_idle_blue_of_the_lights_is_esc_lit_blue():
+    assert BABY_BLUE == NET_LIT

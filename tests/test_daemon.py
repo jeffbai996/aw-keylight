@@ -1,7 +1,7 @@
 from keylights.config import load_config
 from keylights.daemon import Daemon
 from keylights.device import DeviceError
-from keylights.effects import AMBER, BABY_BLUE, GREEN, NET_IDLE, WHITE
+from keylights.effects import AMBER, BABY_BLUE, GREEN, NET_LIT, WHITE
 from keylights.sources import GPU_DOWN, GpuState, LlamaState, OllamaState
 
 BASE = (255, 255, 255)
@@ -19,7 +19,11 @@ class FakeSources:
         self.temp_value = 45.0
         self.mic_value = False
         self.backlight_value = None
+        self.online_value = True
         self.light_values = {}  # per-light overrides; DEL falls back to llama_value
+
+    def online(self):
+        return self._get(self.online_value)
 
     def backlight_state(self):
         return self._get(self.backlight_value)
@@ -174,12 +178,12 @@ def test_esc_and_del_are_boosted_only_while_the_backlight_is_dim():
     sources.backlight_value = "on"
     daemon.tick(now=0.0)
     on_esc = keyboard.frames[-1][0]
-    assert on_esc == NET_IDLE
+    assert on_esc == NET_LIT
 
     sources.backlight_value = "dim"
     daemon.tick(now=0.1)
     dim_esc = keyboard.frames[-1][0]
-    assert dim_esc == tuple(min(255, round(c * 1.6)) for c in NET_IDLE)
+    assert dim_esc == tuple(min(255, round(c * 1.6)) for c in NET_LIT)
     assert keyboard.frames[-1][1] == keyboard.frames[0][1]  # F1 is not boosted
 
 
@@ -187,7 +191,7 @@ def test_unreadable_backlight_state_applies_no_boost():
     daemon, sources, keyboard, _ = make_daemon()
     sources.backlight_value = OSError("unreadable")
     daemon.tick(now=0.0)
-    assert keyboard.frames[-1][0] == NET_IDLE
+    assert keyboard.frames[-1][0] == NET_LIT
 
 
 def compaction_reading(done=15000):
@@ -456,3 +460,22 @@ def test_an_ollama_light_with_a_gpu_overlay_speaks_the_same_language_as_the_othe
     assert collect_key(daemon, keyboard, HOME, 1.0, 1.5) == {GREEN, (0, 0, 0)}
     sources.light_values = {"HOME": OllamaState(True, True, 100.0, gpu=CARD_IDLE)}
     assert collect_key(daemon, keyboard, HOME, 2.0, 2.5) == {BABY_BLUE}
+
+
+def test_esc_goes_dark_when_the_internet_goes_down_and_lights_again_when_it_returns():
+    daemon, sources, keyboard, _ = make_daemon({"KEYLIGHTS_SLOW_POLL_INTERVAL": "0"})
+    daemon.tick(now=0.0)
+    assert keyboard.frames[-1][0] == NET_LIT
+    sources.online_value = False
+    daemon.tick(now=1.0)
+    assert keyboard.frames[-1][0] == (0, 0, 0)
+    sources.online_value = True
+    daemon.tick(now=2.0)
+    assert keyboard.frames[-1][0] == NET_LIT
+
+
+def test_esc_stays_lit_when_the_connectivity_check_itself_fails():
+    daemon, sources, keyboard, _ = make_daemon({"KEYLIGHTS_SLOW_POLL_INTERVAL": "0"})
+    sources.online_value = OSError("nmcli unavailable")
+    daemon.tick(now=0.0)
+    assert keyboard.frames[-1][0] == NET_LIT

@@ -5,6 +5,7 @@ import functools
 import json
 import re
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ CPU_SENSORS = {"coretemp", "k10temp"}
 
 
 BACKLIGHT_STATES = ("on", "dim", "off")
+CONNECTIVITY_PROBE_S = 30.0
 
 
 @dataclass(frozen=True)
@@ -264,6 +266,12 @@ def gpu_state(get_json: GetJson, host: str) -> GpuState:
     return GpuState(up=True, power_w=card.get("power_draw_w"), limit_w=card.get("power_limit_w"), pstate=card.get("pstate"))
 
 
+def parse_connectivity(text: str) -> bool:
+    """NetworkManager's verdict as online or not. Anything it cannot tell is read as online, so
+    a missing or confused check never darkens ESC on a guess."""
+    return text.strip().lower() not in ("none", "limited", "portal")
+
+
 def read_backlight_state(path: str | Path) -> str | None:
     """The kbd-light state file: on, dim or off. None when missing or unrecognised."""
     try:
@@ -308,12 +316,39 @@ class Sources:
     def __init__(self, readers: Mapping[str, Callable[[], Any]], backlight_path: str | None = None):
         self._readers = readers
         self._backlight_path = backlight_path
+        self._last_probe = float("-inf")
+        self._probe: subprocess.Popen | None = None
 
     def backlight_state(self) -> str | None:
         return read_backlight_state(self._backlight_path) if self._backlight_path else None
 
     def inference(self, name: str) -> Any:
         return self._readers[name]()
+
+    def online(self) -> bool:
+        """Whether the internet is up, from NetworkManager. Its own check runs every few minutes, so
+        a fresh one is started at most every 30 s without waiting for it; a later read sees the answer.
+        A link that drops is noticed at once, an outage upstream within about 30 s."""
+        now = time.monotonic()
+        if now - self._last_probe >= CONNECTIVITY_PROBE_S:
+            self._last_probe = now
+            try:
+                if self._probe is not None:
+                    self._probe.poll()  # reap the previous one
+                self._probe = subprocess.Popen(
+                    ["nmcli", "networking", "connectivity", "check"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except OSError:
+                return True  # no nmcli: cannot tell
+        try:
+            result = subprocess.run(
+                ["nmcli", "-t", "-g", "CONNECTIVITY", "general"],
+                capture_output=True, text=True, timeout=2, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return True
+        return parse_connectivity(result.stdout)
 
     def net_bytes(self) -> int:
         return parse_net_bytes(Path("/proc/net/dev").read_text())

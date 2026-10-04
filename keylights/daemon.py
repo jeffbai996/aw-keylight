@@ -98,7 +98,8 @@ class Daemon:
     def _poll_slow(self) -> None:
         temp = self._safe(self._sources.cpu_temp, None, "cpu temperature")
         muted = self._safe(self._sources.mic_muted, False, "mic state")
-        self._inputs = dataclasses.replace(self._inputs, temp_c=temp, muted=muted)
+        online = self._safe(self._sources.online, True, "connectivity")
+        self._inputs = dataclasses.replace(self._inputs, temp_c=temp, muted=muted, online=online)
 
     @staticmethod
     def _safe(read, fallback, label: str):

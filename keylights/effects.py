@@ -15,9 +15,9 @@ RED: Color = (255, 0, 0)
 WHITE: Color = (255, 255, 255)
 # Idle: the host is up and nothing is running, whether its model is loaded or parked. Dark is kept
 # for a vacant GPU: gamemode, or a server that is down.
-BABY_BLUE: Color = (30, 110, 255)
-NET_IDLE: Color = (0, 10, 20)
-NET_ACTIVE: Color = (0, 170, 255)
+BABY_BLUE: Color = (0, 170, 255)
+NET_LIT: Color = BABY_BLUE  # ESC while the internet is up: the same blue the idle lights use
+NET_DIP: Color = (0, 10, 20)  # ESC's dip with traffic. Dark is kept for "no internet".
 
 TOKENS_PER_BLINK = 2.0
 PROMPT_TOKENS_PER_BLINK = 100.0
@@ -65,6 +65,7 @@ class Inputs:
     temp_c: float | None
     muted: bool
     lights: Mapping[int, Light] = field(default_factory=dict)  # key id -> what that key shows
+    online: bool = True  # False when there is no internet: ESC goes dark
 
 
 def managed_keys(light_keys) -> tuple[int, ...]:
@@ -131,8 +132,11 @@ def del_color(
     return BABY_BLUE
 
 
-def esc_color(rate: float, t: float) -> Color:
-    return NET_ACTIVE if rate > 0 and blink_on(rate, t) else NET_IDLE
+def esc_color(rate: float, t: float, online: bool = True) -> Color:
+    """Lit blue while the internet is up, dipping to dim blue with traffic. Dark with no internet."""
+    if not online:
+        return OFF
+    return NET_DIP if rate > 0 and not blink_on(rate, t) else NET_LIT
 
 
 def mute_color(muted: bool, base: Color) -> Color:
@@ -228,7 +232,7 @@ def build_frame(
     dim mode they are the keys that would otherwise vanish. The default compact_tokens
     never triggers, so callers opt in to the compaction state. Only configured lights
     appear in the frame; the other keys keep the keyboard's own profile."""
-    esc_key = esc_color(net_blink_rate(inputs.net_bytes_per_s, esc_cap), t)
+    esc_key = esc_color(net_blink_rate(inputs.net_bytes_per_s, esc_cap), t, inputs.online)
     frame = {
         key_id("ESC"): boost_color(esc_key, boost),
         key_id("F5"): mute_color(inputs.muted, base),

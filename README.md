@@ -6,7 +6,7 @@ and lighting chip `187c:0550`).
 | Light | Shows |
 |---|---|
 | Inference keys | Each key listed in `KEYLIGHTS_LIGHTS` (for example DEL, HOME, END). See below. |
-| ESC | Network traffic on this machine. Faint blue when idle, blinks with traffic (up to `KEYLIGHTS_ESC_BLINK_CAP` blinks/s). |
+| ESC | Network. Lit blue while the internet is up, dipping to dim blue with traffic (up to `KEYLIGHTS_ESC_BLINK_CAP` dips a second). Dark when there is no internet: NetworkManager reports none, limited or a captive portal. A fresh check is started at most every 30 seconds. |
 | F1-F4 | CPU temperature. Green at 45 C through yellow to red at 90 C. |
 | F5 | Red while the default microphone is muted. |
 | Power button | Summary of the inference lights as a steady colour: green when any host is up, amber while any llama.cpp server reads a prompt, off when none is up. |
@@ -21,7 +21,7 @@ Every inference light uses the same colours:
 | Colour | Meaning |
 |---|---|
 | Dark | The host is unreachable, or its GPU is vacant (gamemode stops Ollama). |
-| Baby blue | Idle: the host is up and nothing is running, whether its model is loaded or parked. |
+| Baby blue | Idle: the host is up and nothing is running, whether its model is loaded or parked. It is the same blue as a lit ESC. |
 | Amber | A prompt is being read, and only that. It blinks at a rate that follows prompt speed, holds steady when progress stalls, and flashes at `KEYLIGHTS_COMPACT_BLINK` when the prompt is large (`KEYLIGHTS_COMPACT_TOKENS` or more uncached tokens). |
 | Steady green | The prompt is read and the first token is pending. |
 | Green flicker | Working: flickering with generated tokens, or with the GPU's power draw. |

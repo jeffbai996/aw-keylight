@@ -10,6 +10,7 @@ from keylights.sources import (
     llama_state,
     net_rate,
     ollama_state,
+    parse_connectivity,
     parse_expires_at,
     parse_mic_muted,
     parse_net_bytes,
@@ -459,3 +460,16 @@ def test_a_gpu_overlay_that_is_down_or_slow_is_left_out_rather_than_darkening_th
 def test_the_gpu_overlay_is_read_even_when_no_chat_model_is_loaded():
     state = ollama_state(ps(PS_EMBED), gpu=lambda: BURST)
     assert not state.loaded and state.gpu == BURST
+
+
+@pytest.mark.parametrize("text, online", [
+    ("full\n", True),
+    ("unknown\n", True),   # NetworkManager cannot tell: do not blank the key on a guess
+    ("none\n", False),
+    ("limited\n", False),
+    ("portal\n", False),   # a captive portal is not the internet
+    ("", True),
+    ("garbage\n", True),
+])
+def test_networkmanager_connectivity_decides_whether_the_internet_is_up(text, online):
+    assert parse_connectivity(text) is online
