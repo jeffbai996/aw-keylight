@@ -33,3 +33,10 @@ def test_dim_boost_defaults_to_1_6_and_is_overridable():
 def test_backlight_state_path_defaults_under_the_home_state_dir_and_is_overridable():
     assert load_config({}).backlight_state_path.endswith("/.local/state/kbd-light/state")
     assert load_config({"KEYLIGHTS_BACKLIGHT_STATE": "/tmp/x"}).backlight_state_path == "/tmp/x"
+
+
+def test_compaction_threshold_and_flash_rate_have_defaults_and_overrides():
+    config = load_config({})
+    assert config.compact_tokens == 12288 and config.compact_blink == 10.0
+    tuned = load_config({"KEYLIGHTS_COMPACT_TOKENS": "20000", "KEYLIGHTS_COMPACT_BLINK": "6"})
+    assert tuned.compact_tokens == 20000 and tuned.compact_blink == 6.0

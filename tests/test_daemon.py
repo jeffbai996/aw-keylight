@@ -182,3 +182,21 @@ def test_unreadable_backlight_state_applies_no_boost():
     sources.backlight_value = OSError("unreadable")
     daemon.tick(now=0.0)
     assert keyboard.frames[-1][0] == NET_IDLE
+
+
+def compaction_reading(done=15000):
+    return LlamaState(up=True, processing=True, decoded=0, prompt_new=30000, prompt_done=done)
+
+
+def test_del_flashes_amber_once_the_prompt_is_compaction_sized():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.llama_value = compaction_reading()
+    assert collect_del(daemon, keyboard, 0.0, 0.5) == {AMBER, (0, 0, 0)}
+
+
+def test_del_returns_to_green_when_the_compaction_job_ends():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.llama_value = compaction_reading()
+    daemon.tick(now=0.0)
+    sources.llama_value = UP_IDLE
+    assert collect_del(daemon, keyboard, 1.0, 1.3) == {GREEN}

@@ -56,7 +56,10 @@ class Daemon:
     def render(self, now: float) -> None:
         cfg = self._config
         boost = cfg.dim_boost if self._backlight == "dim" else 1.0
-        frame = build_frame(self._inputs, now, cfg.base_color, cfg.del_blink_cap, cfg.esc_blink_cap, boost)
+        frame = build_frame(
+            self._inputs, now, cfg.base_color, cfg.del_blink_cap, cfg.esc_blink_cap, boost,
+            cfg.compact_tokens, cfg.compact_blink,
+        )
         try:
             self._keyboard.update(frame)
         except DeviceError as exc:

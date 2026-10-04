@@ -66,11 +66,26 @@ def blink_on(rate: float, t: float) -> bool:
     return (t * rate) % 1.0 < 0.5
 
 
-def del_color(state: LlamaState, rate: float, t: float, prompt_advancing: bool = False) -> Color:
+def is_compaction(state: LlamaState, threshold: float) -> bool:
+    """A busy slot that has evaluated at least `threshold` uncached prompt tokens.
+
+    The server does not label compaction. A very large uncached prompt is the closest
+    signal: ordinary agent turns reuse the cached prefix and evaluate a few thousand tokens.
+    """
+    return state.processing and state.prompt_done is not None and state.prompt_done >= threshold
+
+
+def del_color(
+    state: LlamaState, rate: float, t: float, prompt_advancing: bool = False, compaction: bool = False
+) -> Color:
     """Amber while the prompt is read (blinking while it advances), then green:
-    steady for the first-token wait and when done, flickering while generating."""
+    steady for the first-token wait and when done, flickering while generating.
+    A compaction-sized job stays amber for its whole run: `rate` flashes it while the
+    prompt is read and flickers it with tokens afterwards; a zero rate is steady."""
     if not state.up:
         return OFF
+    if compaction and state.processing:
+        return AMBER if blink_on(rate, t) else OFF
     if state.reading:
         return OFF if prompt_advancing and not blink_on(rate, t) else AMBER
     if state.processing and not blink_on(rate, t):
@@ -92,15 +107,26 @@ def boost_color(color: Color, factor: float) -> Color:
 
 
 def build_frame(
-    inputs: Inputs, t: float, base: Color, del_cap: float = 20.0, esc_cap: float = 10.0, boost: float = 1.0
+    inputs: Inputs,
+    t: float,
+    base: Color,
+    del_cap: float = 20.0,
+    esc_cap: float = 10.0,
+    boost: float = 1.0,
+    compact_tokens: float = float("inf"),
+    compact_blink: float = 10.0,
 ) -> dict[int, Color]:
     """boost lifts ESC and DEL only: the backlight level is global, so in dim mode
-    they are the keys that would otherwise vanish."""
-    if inputs.llama.reading:
+    they are the keys that would otherwise vanish. The default compact_tokens
+    never triggers, so callers opt in to the compaction state."""
+    compaction = is_compaction(inputs.llama, compact_tokens)
+    if compaction and inputs.llama.reading:
+        del_rate = min(del_cap, compact_blink)
+    elif inputs.llama.reading:
         del_rate = prompt_blink_rate(inputs.prompt_rate, del_cap)
     else:
         del_rate = blink_rate(inputs.token_rate, del_cap)
-    del_key = del_color(inputs.llama, del_rate, t, inputs.prompt_advancing)
+    del_key = del_color(inputs.llama, del_rate, t, inputs.prompt_advancing, compaction)
     esc_key = esc_color(net_blink_rate(inputs.net_bytes_per_s, esc_cap), t)
     frame = {
         key_id("DEL"): boost_color(del_key, boost),

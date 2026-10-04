@@ -8,6 +8,7 @@ from keylights.effects import (
     blink_rate,
     build_frame,
     del_color,
+    is_compaction,
     mute_color,
     net_blink_rate,
     prompt_blink_rate,
@@ -20,6 +21,9 @@ UP_IDLE = LlamaState(up=True, processing=False, decoded=0)
 READING = LlamaState(up=True, processing=True, decoded=0)
 READING_PROMPT = LlamaState(up=True, processing=True, decoded=0, prompt_new=2000, prompt_done=500)
 AWAITING_TOKEN = LlamaState(up=True, processing=True, decoded=0, prompt_new=2000, prompt_done=2000)
+COMPACT_READING = LlamaState(up=True, processing=True, decoded=0, prompt_new=30000, prompt_done=15000)
+COMPACT_AWAITING = LlamaState(up=True, processing=True, decoded=0, prompt_new=24000, prompt_done=24000)
+COMPACT_DECODING = LlamaState(up=True, processing=True, decoded=300, prompt_new=24000, prompt_done=24000)
 DECODING = LlamaState(up=True, processing=True, decoded=120)
 DOWN = LlamaState(up=False, processing=False, decoded=0)
 
@@ -143,3 +147,53 @@ def test_temperature_keys_fall_back_to_base_when_sensor_missing():
 def test_frame_covers_exactly_the_managed_keys():
     frame = build_frame(inputs(), 0.0, BASE)
     assert set(frame) == {0, 1, 2, 3, 4, 5, 15}
+
+
+def test_compaction_needs_a_busy_slot_with_enough_prompt_tokens_processed():
+    assert is_compaction(COMPACT_READING, 12288)
+    assert not is_compaction(COMPACT_READING, 20000)
+    assert not is_compaction(READING_PROMPT, 12288)
+    assert not is_compaction(UP_IDLE, 12288)
+
+
+def test_compaction_is_false_without_prompt_fields_or_with_an_idle_slot():
+    assert not is_compaction(READING, 12288)
+    idle_after_big_job = LlamaState(up=True, processing=False, decoded=0, prompt_new=30000, prompt_done=30000)
+    assert not is_compaction(idle_after_big_job, 12288)
+
+
+def test_del_flashes_amber_fast_while_a_compaction_sized_prompt_is_read():
+    assert del_color(COMPACT_READING, 10.0, 0.02, compaction=True) == AMBER
+    assert del_color(COMPACT_READING, 10.0, 0.07, compaction=True) == OFF
+
+
+def test_del_stays_solid_amber_for_the_first_token_wait_of_a_compaction():
+    assert del_color(COMPACT_AWAITING, 0.0, 0.3, compaction=True) == AMBER
+    assert del_color(COMPACT_AWAITING, 0.0, 0.7, compaction=True) == AMBER
+
+
+def test_del_flickers_amber_with_tokens_while_a_compaction_generates():
+    assert del_color(COMPACT_DECODING, 4.0, 0.05, compaction=True) == AMBER
+    assert del_color(COMPACT_DECODING, 4.0, 0.15, compaction=True) == OFF
+
+
+def test_frame_compaction_flash_ignores_prompt_speed():
+    for prompt_rate in (0.0, 50.0, 900.0):
+        live = inputs(llama=COMPACT_READING, prompt_rate=prompt_rate, prompt_advancing=True)
+        colors = {build_frame(live, t / 100, BASE, compact_tokens=12288, compact_blink=10.0)[15] for t in range(40)}
+        assert colors == {AMBER, OFF}
+
+
+def test_frame_compaction_flash_is_capped_by_the_del_blink_cap():
+    live = inputs(llama=COMPACT_READING)
+    uncapped = build_frame(live, 0.2, BASE, del_cap=55.0, compact_tokens=12288, compact_blink=10.0)
+    capped = build_frame(live, 0.2, BASE, del_cap=4.0, compact_tokens=12288, compact_blink=10.0)
+    assert uncapped[15] == AMBER and capped[15] == OFF
+
+
+def test_frame_below_the_compaction_threshold_keeps_the_prompt_blink():
+    live = inputs(llama=READING_PROMPT, prompt_rate=400.0, prompt_advancing=True)
+    colors = {build_frame(live, t / 100, BASE, compact_tokens=12288, compact_blink=10.0)[15] for t in range(40)}
+    assert colors == {AMBER, OFF}
+    steady = build_frame(inputs(llama=READING_PROMPT), 0.7, BASE, compact_tokens=12288, compact_blink=10.0)
+    assert steady[15] == AMBER

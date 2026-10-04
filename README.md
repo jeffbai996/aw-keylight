@@ -5,7 +5,7 @@ and lighting chip `187c:0550`).
 
 | Light | Shows |
 |---|---|
-| DEL | Inference server. Amber while a prompt is read: blinking at a rate that follows prompt speed while it advances, steady when it has stalled. Steady green while the first token is pending and when idle or done. Flickers green with generated tokens. Off when the server is down. |
+| DEL | Inference server. Amber while a prompt is read: blinking at a rate that follows prompt speed while it advances, steady when it has stalled. Steady green while the first token is pending and when idle or done. Flickers green with generated tokens. Off when the server is down. A job that has evaluated `KEYLIGHTS_COMPACT_TOKENS` or more uncached prompt tokens is treated as a compaction: amber for its whole run, flashing at `KEYLIGHTS_COMPACT_BLINK` while the prompt is read, then flickering with tokens. |
 | ESC | Network traffic on this machine. Faint blue when idle, blinks with traffic (up to `KEYLIGHTS_ESC_BLINK_CAP` blinks/s). |
 | F1-F4 | CPU temperature. Green at 45 C through yellow to red at 90 C. |
 | F5 | Red while the default microphone is muted. |
