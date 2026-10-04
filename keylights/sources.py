@@ -66,7 +66,7 @@ class OllamaState:
     touched: float | None  # latest expiry among chat models; it moves when a request finishes
     answered: bool = True
     # Live activity, from an ollama-gate's /_gate/activity; None when the gate has no such
-    # endpoint, in which case the light falls back to loaded plus the finished-request pulse.
+    # endpoint, in which case the light falls back to loaded.
     in_flight: int | None = None
     awaiting: int | None = None  # in flight with nothing streamed back yet: the prompt is being read
     events: int | None = None  # events streamed so far; only its growth means anything
@@ -224,7 +224,7 @@ def ollama_state(get_json: GetJson, gpu: Callable[[], GpuState] | None = None) -
     stamps = [t for t in (parse_expires_at(str(m.get("expires_at", ""))) for m in chat) if t is not None]
     in_flight, awaiting, events = _gate_activity(get_json) if chat else (None, None, None)
     # Loaded means any model is resident, an embedder included: where one is pinned, nothing
-    # resident is the abnormal state. Chat models alone drive the expiry pulse and the gate counters.
+    # resident is the abnormal state. Only chat models drive the gate counters.
     return OllamaState(
         up=True, loaded=bool(models), touched=max(stamps) if stamps else None,
         in_flight=in_flight, awaiting=awaiting, events=events, gpu=_overlay(gpu),

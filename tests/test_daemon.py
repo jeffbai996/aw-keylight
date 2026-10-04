@@ -1,7 +1,7 @@
 from keylights.config import load_config
 from keylights.daemon import Daemon
 from keylights.device import DeviceError
-from keylights.effects import AMBER, BABY_BLUE, GREEN, NET_LIT, RED, WHITE
+from keylights.effects import AMBER, BABY_BLUE, GREEN, NET_LIT, RED
 from keylights.sources import GPU_DOWN, GpuState, LlamaState, OllamaState
 
 BASE = (255, 255, 255)
@@ -252,24 +252,11 @@ def test_an_unanswered_poll_keeps_only_that_lights_last_state():
     assert frame[END] == AMBER and frame[DEL] == BABY_BLUE
 
 
-def test_ollama_light_pulses_white_after_a_request_finishes_then_settles():
+def test_ollama_light_stays_baby_blue_when_a_request_finishes():
     daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
     sources.light_values = {"HOME": OllamaState(True, True, 100.0)}
     daemon.tick(now=0.0)
-    assert keyboard.frames[-1][HOME] == BABY_BLUE
-
     sources.light_values = {"HOME": OllamaState(True, True, 101.0)}  # expiry moved: a request finished
-    daemon.tick(now=1.0)
-    assert keyboard.frames[-1][HOME] == WHITE
-    daemon.tick(now=3.0)
-    assert keyboard.frames[-1][HOME] == BABY_BLUE
-
-
-def test_ollama_light_does_not_pulse_when_a_model_first_appears():
-    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
-    sources.light_values = {"HOME": OllamaState(True, False, None)}
-    daemon.tick(now=0.0)
-    sources.light_values = {"HOME": OllamaState(True, True, 500.0)}
     daemon.tick(now=1.0)
     assert keyboard.frames[-1][HOME] == BABY_BLUE
 

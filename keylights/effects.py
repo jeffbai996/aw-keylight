@@ -12,7 +12,6 @@ OFF: Color = (0, 0, 0)
 GREEN: Color = (0, 255, 0)
 AMBER: Color = (255, 140, 0)
 RED: Color = (255, 0, 0)
-WHITE: Color = (255, 255, 255)
 # Idle: the host is up with its model loaded and nothing is running.
 BABY_BLUE: Color = (0, 30, 255)
 # ESC while the internet is up. Its own blue, separate from the idle lights'.
@@ -47,7 +46,6 @@ class InferenceInput:
 @dataclass(frozen=True)
 class OllamaInput:
     state: OllamaState
-    pulse: bool  # a request finished within the pulse window
     event_rate: float = 0.0  # events streamed per second, from the gate's counter
 
 
@@ -150,13 +148,12 @@ def boost_color(color: Color, factor: float) -> Color:
 
 
 def ollama_color(
-    state: OllamaState, pulse: bool, t: float = 0.0, event_rate: float = 0.0, cap: float = 20.0
+    state: OllamaState, t: float = 0.0, event_rate: float = 0.0, cap: float = 20.0
 ) -> Color:
     """Ollama light, in the same language as the llama one. A chat request through the gate:
     amber blink while its prompt is read, green flicker with streamed events (about one per
     token). Otherwise, if a GPU overlay says the card is working (embeddings, whisper): green
-    flicker. Otherwise baby blue when a chat model is loaded (white for a moment as a request
-    finishes) and dark when none is. Red when the server is unreachable. Gamemode, which stops
+    flicker. Otherwise baby blue when a model is loaded and dark when none is. Red when the server is unreachable. Gamemode, which stops
     Ollama on purpose, is dark: the card has been handed to a game."""
     if state.gpu is not None and state.gpu.gamemode:
         return OFF
@@ -169,8 +166,6 @@ def ollama_color(
     working = gpu_blink_rate(state.gpu, cap) if state.gpu else 0.0
     if working > 0:
         return GREEN if blink_on(working, t) else OFF
-    if pulse:
-        return WHITE
     return BABY_BLUE if state.loaded else OFF
 
 
@@ -251,7 +246,7 @@ def build_frame(
         elif isinstance(light, GpuInput):
             color = gpu_color(light.state, t, del_cap)
         else:
-            color = ollama_color(light.state, light.pulse, t, light.event_rate, del_cap)
+            color = ollama_color(light.state, t, light.event_rate, del_cap)
         frame[key] = boost_color(color, boost)
     temp = base if inputs.temp_c is None else temp_color(inputs.temp_c)
     frame.update({key: temp for key in TEMP_KEYS})

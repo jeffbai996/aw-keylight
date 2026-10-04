@@ -8,7 +8,6 @@ from keylights.effects import (
     GpuInput,
     gpu_blink_rate,
     gpu_color,
-    WHITE,
     InferenceInput,
     OllamaInput,
     ollama_color,
@@ -229,25 +228,21 @@ OLLAMA_DOWN = OllamaState(up=False, loaded=False, touched=None)
 
 
 def test_ollama_light_is_baby_blue_while_a_chat_model_is_loaded_and_idle():
-    assert ollama_color(OLLAMA_LOADED, pulse=False) == BABY_BLUE
+    assert ollama_color(OLLAMA_LOADED) == BABY_BLUE
 
 
 def test_ollama_light_is_dark_when_the_server_is_up_but_no_chat_model_is_loaded():
-    assert ollama_color(OLLAMA_EMPTY, pulse=False) == OFF
+    assert ollama_color(OLLAMA_EMPTY) == OFF
 
 
 def test_ollama_light_is_red_when_the_server_is_unreachable():
-    assert ollama_color(OLLAMA_DOWN, pulse=False) == RED
-
-
-def test_ollama_light_pulses_white_when_a_request_finishes():
-    assert ollama_color(OLLAMA_LOADED, pulse=True) == WHITE
+    assert ollama_color(OLLAMA_DOWN) == RED
 
 
 def lights_frame(t, **frame_args):
     lights = {
-        key_id("F12"): OllamaInput(OLLAMA_LOADED, pulse=False),
-        key_id("HOME"): OllamaInput(OLLAMA_LOADED, pulse=True),
+        key_id("F12"): OllamaInput(OLLAMA_LOADED),
+        key_id("HOME"): OllamaInput(OLLAMA_LOADED),
         key_id("END"): InferenceInput(READING_PROMPT, prompt_rate=400.0, prompt_advancing=True),
         key_id("DEL"): InferenceInput(DECODING, token_rate=8.0),
     }
@@ -257,7 +252,7 @@ def lights_frame(t, **frame_args):
 def test_each_light_key_shows_its_own_source():
     frame = lights_frame(0.05)
     assert frame[key_id("F12")] == BABY_BLUE
-    assert frame[key_id("HOME")] == WHITE
+    assert frame[key_id("HOME")] == BABY_BLUE
     assert frame[key_id("END")] == AMBER  # prompt blink, on-phase
     assert frame[key_id("DEL")] == GREEN  # token flicker, on-phase
 
@@ -265,7 +260,7 @@ def test_each_light_key_shows_its_own_source():
 def test_light_keys_blink_independently_of_each_other():
     frame = lights_frame(0.15)
     assert frame[key_id("END")] == OFF and frame[key_id("DEL")] == OFF
-    assert frame[key_id("F12")] == BABY_BLUE and frame[key_id("HOME")] == WHITE
+    assert frame[key_id("F12")] == BABY_BLUE and frame[key_id("HOME")] == BABY_BLUE
 
 
 def test_dim_boost_also_lifts_the_light_keys():
@@ -290,19 +285,19 @@ def test_power_state_reads_prompt_when_any_inference_light_is_reading():
 
 
 def test_power_state_is_up_when_any_light_is_up_and_none_is_reading():
-    lights = {key_id("HOME"): OllamaInput(OLLAMA_DOWN, pulse=False), key_id("END"): InferenceInput(UP_IDLE)}
+    lights = {key_id("HOME"): OllamaInput(OLLAMA_DOWN), key_id("END"): InferenceInput(UP_IDLE)}
     state = power_state(lights)
     assert state.up and not state.reading
 
 
 def test_power_state_counts_a_loaded_ollama_model_as_up():
-    state = power_state({key_id("HOME"): OllamaInput(OLLAMA_LOADED, pulse=False)})
+    state = power_state({key_id("HOME"): OllamaInput(OLLAMA_LOADED)})
     assert state.up and not state.reading
 
 
 def test_power_state_is_down_when_every_light_is_down_or_none_exist():
     assert not power_state({}).up
-    assert not power_state({key_id("HOME"): OllamaInput(OLLAMA_DOWN, pulse=False), key_id("END"): InferenceInput(DOWN)}).up
+    assert not power_state({key_id("HOME"): OllamaInput(OLLAMA_DOWN), key_id("END"): InferenceInput(DOWN)}).up
 
 
 def test_compaction_looks_at_the_largest_slot_when_the_state_carries_one():
@@ -318,38 +313,32 @@ def live(in_flight=0, awaiting=0, events=None):
 
 def test_ollama_light_blinks_amber_while_the_gate_waits_for_the_first_event():
     state = live(in_flight=1, awaiting=1)
-    assert ollama_color(state, pulse=False, t=0.05) == AMBER
-    assert ollama_color(state, pulse=False, t=0.15) == OFF
+    assert ollama_color(state, t=0.05) == AMBER
+    assert ollama_color(state, t=0.15) == OFF
 
 
 def test_ollama_light_flickers_green_with_streamed_events():
     state = live(in_flight=1, awaiting=0)
-    assert ollama_color(state, pulse=False, t=0.05, event_rate=8.0) == GREEN
-    assert ollama_color(state, pulse=False, t=0.15, event_rate=8.0) == OFF
+    assert ollama_color(state, t=0.05, event_rate=8.0) == GREEN
+    assert ollama_color(state, t=0.15, event_rate=8.0) == OFF
 
 
 def test_ollama_light_stays_green_while_streaming_with_no_new_events_yet():
-    assert ollama_color(live(in_flight=1), pulse=False, t=0.15, event_rate=0.0) == GREEN
+    assert ollama_color(live(in_flight=1), t=0.15, event_rate=0.0) == GREEN
 
 
 def test_ollama_light_flicker_is_capped():
     state = live(in_flight=1)
-    assert ollama_color(state, pulse=False, t=0.2, event_rate=1000.0, cap=4.0) == OFF  # 4/s, off-phase
-    assert ollama_color(state, pulse=False, t=0.2, event_rate=1000.0, cap=50.0) == GREEN
-
-
-def test_ollama_light_pulses_white_only_when_idle():
-    assert ollama_color(live(in_flight=0), pulse=True) == WHITE
-    assert ollama_color(live(in_flight=1, awaiting=1), pulse=True, t=0.05) == AMBER
+    assert ollama_color(state, t=0.2, event_rate=1000.0, cap=4.0) == OFF  # 4/s, off-phase
+    assert ollama_color(state, t=0.2, event_rate=1000.0, cap=50.0) == GREEN
 
 
 def test_ollama_light_without_activity_data_behaves_as_before():
-    assert ollama_color(OLLAMA_LOADED, pulse=False, t=0.15, event_rate=5.0) == BABY_BLUE
-    assert ollama_color(OLLAMA_LOADED, pulse=True) == WHITE
+    assert ollama_color(OLLAMA_LOADED, t=0.15, event_rate=5.0) == BABY_BLUE
 
 
 def test_frame_blinks_a_light_from_its_event_rate_and_cap():
-    light = OllamaInput(live(in_flight=1), pulse=False, event_rate=8.0)
+    light = OllamaInput(live(in_flight=1), event_rate=8.0)
     on, off = (build_frame(inputs(lights={key_id("HOME"): light}), t, BASE)[key_id("HOME")] for t in (0.05, 0.15))
     assert (on, off) == (GREEN, OFF)
 
@@ -428,13 +417,13 @@ def test_a_llama_server_that_is_down_is_red_and_one_that_is_idle_is_baby_blue():
 
 
 def test_frame_shows_parked_hosts_as_dark():
-    lights = {key_id("DEL"): InferenceInput(PARKED), key_id("END"): OllamaInput(OLLAMA_EMPTY, pulse=False)}
+    lights = {key_id("DEL"): InferenceInput(PARKED), key_id("END"): OllamaInput(OLLAMA_EMPTY)}
     frame = build_frame(inputs(lights=lights), 0.0, BASE)
     assert frame[key_id("DEL")] == OFF and frame[key_id("END")] == OFF
 
 
 def test_power_state_counts_a_parked_ollama_host_as_up():
-    assert power_state({key_id("END"): OllamaInput(OLLAMA_EMPTY, pulse=False)}).up
+    assert power_state({key_id("END"): OllamaInput(OLLAMA_EMPTY)}).up
 
 
 def with_gpu(state, gpu):
@@ -445,33 +434,33 @@ def with_gpu(state, gpu):
 
 def test_a_parked_host_whose_gpu_is_idle_is_dark():
     parked = with_gpu(OLLAMA_EMPTY, GPU_IDLE)
-    assert {ollama_color(parked, pulse=False, t=t / 10) for t in range(10)} == {OFF}
+    assert {ollama_color(parked, t=t / 10) for t in range(10)} == {OFF}
 
 
 def test_a_parked_host_whose_gpu_is_working_flickers_green():
     parked = with_gpu(OLLAMA_EMPTY, GPU_BURST)
-    assert {ollama_color(parked, pulse=False, t=t / 100, cap=25.0) for t in range(60)} == {GREEN, OFF}
+    assert {ollama_color(parked, t=t / 100, cap=25.0) for t in range(60)} == {GREEN, OFF}
 
 
 def test_a_loaded_idle_host_flickers_green_when_its_gpu_works_and_is_baby_blue_when_not():
-    assert {ollama_color(with_gpu(OLLAMA_LOADED, GPU_BURST), pulse=False, t=t / 100, cap=25.0) for t in range(60)} == {GREEN, OFF}
-    assert {ollama_color(with_gpu(OLLAMA_LOADED, GPU_IDLE), pulse=False, t=t / 10) for t in range(10)} == {BABY_BLUE}
+    assert {ollama_color(with_gpu(OLLAMA_LOADED, GPU_BURST), t=t / 100, cap=25.0) for t in range(60)} == {GREEN, OFF}
+    assert {ollama_color(with_gpu(OLLAMA_LOADED, GPU_IDLE), t=t / 10) for t in range(10)} == {BABY_BLUE}
 
 
 def test_a_chat_request_through_the_gate_outranks_the_gpu_flicker():
     waiting = with_gpu(live(in_flight=1, awaiting=1), GPU_BURST)
-    assert ollama_color(waiting, pulse=False, t=0.05) == AMBER
+    assert ollama_color(waiting, t=0.05) == AMBER
 
 
 def test_an_unreachable_host_is_red_whatever_the_gpu_says_short_of_gamemode():
-    assert ollama_color(with_gpu(OLLAMA_DOWN, GPU_BURST), pulse=False) == RED
+    assert ollama_color(with_gpu(OLLAMA_DOWN, GPU_BURST)) == RED
 
 
 def test_every_kind_of_light_shares_one_vocabulary_blue_idle_green_working_red_unreachable():
     ollama_busy = OllamaState(up=True, loaded=True, touched=1.0, in_flight=1, awaiting=0, events=5)
     cases = {
         "llama": (UP_IDLE, DECODING, DOWN, lambda st, t: del_color(st, 8.0 if st.processing else 0.0, t)),
-        "ollama": (OLLAMA_LOADED, ollama_busy, OLLAMA_DOWN, lambda st, t: ollama_color(st, False, t, event_rate=16.0)),
+        "ollama": (OLLAMA_LOADED, ollama_busy, OLLAMA_DOWN, lambda st, t: ollama_color(st, t, event_rate=16.0)),
         "gpu": (GPU_IDLE, GPU_BURST, GPU_DOWN, lambda st, t: gpu_color(st, t, cap=25.0)),
     }
     for kind, (idle, working, down, color) in cases.items():
@@ -508,30 +497,30 @@ NOT_GAMING = GpuState(up=True, power_w=30.0, limit_w=450.0, pstate="P8", gamemod
 
 def test_an_unreachable_host_is_red_on_every_kind_of_light():
     assert del_color(DOWN, 0.0, 0.3) == RED
-    assert ollama_color(OLLAMA_DOWN, pulse=False) == RED
+    assert ollama_color(OLLAMA_DOWN) == RED
     assert gpu_color(GPU_DOWN, 0.3) == RED
 
 
 def test_an_unloaded_host_is_dark_and_a_loaded_idle_one_is_baby_blue():
     assert del_color(PARKED, 0.0, 0.3) == OFF
     assert del_color(UP_IDLE, 0.0, 0.3) == BABY_BLUE
-    assert ollama_color(OLLAMA_EMPTY, pulse=False) == OFF
-    assert ollama_color(OLLAMA_LOADED, pulse=False) == BABY_BLUE
+    assert ollama_color(OLLAMA_EMPTY) == OFF
+    assert ollama_color(OLLAMA_LOADED) == BABY_BLUE
 
 
 def test_gamemode_is_dark_not_red_even_though_it_stops_ollama():
     stopped_for_gaming = with_gpu(OLLAMA_DOWN, GAMING)
-    assert ollama_color(stopped_for_gaming, pulse=False) == OFF
+    assert ollama_color(stopped_for_gaming) == OFF
     outage = with_gpu(OLLAMA_DOWN, NOT_GAMING)
-    assert ollama_color(outage, pulse=False) == RED
+    assert ollama_color(outage) == RED
 
 
 def test_gamemode_darkens_a_host_whatever_else_it_reports():
-    assert ollama_color(with_gpu(OLLAMA_LOADED, GAMING), pulse=True) == OFF
-    assert ollama_color(with_gpu(live(in_flight=1, awaiting=1), GAMING), pulse=False, t=0.05) == OFF
+    assert ollama_color(with_gpu(OLLAMA_LOADED, GAMING)) == OFF
+    assert ollama_color(with_gpu(live(in_flight=1, awaiting=1), GAMING), t=0.05) == OFF
     assert gpu_color(GAMING, 0.3) == OFF
 
 
 def test_a_parked_host_whose_gpu_is_working_still_flickers_green_not_dark():
     parked = with_gpu(OLLAMA_EMPTY, GPU_BURST)
-    assert {ollama_color(parked, pulse=False, t=t / 100, cap=25.0) for t in range(60)} == {GREEN, OFF}
+    assert {ollama_color(parked, t=t / 100, cap=25.0) for t in range(60)} == {GREEN, OFF}

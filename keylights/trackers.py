@@ -9,8 +9,6 @@ from .sources import OLLAMA_DOWN, GpuState, LlamaState, OllamaState, token_rate
 # The server evaluates the prompt in batches and answers /slots between them, so
 # progress arrives in lumps seconds apart. Blinking holds this long after the last one.
 PROMPT_ADVANCE_HOLD_S = 6.0
-# How long a light stays white after an Ollama request finishes.
-PULSE_S = 0.4
 # How long a silent Ollama host keeps its last reading. A stopped Ollama (gamemode) makes the gate
 # hang on a WSL host with mirrored networking instead of refusing, so silence has to end in "dark".
 OLLAMA_SILENCE_GRACE_S = 5.0
@@ -61,14 +59,11 @@ class LlamaTracker:
 
 
 class OllamaTracker:
-    """Detects finished requests from the model expiry moving forward, turns the gate's
-    event counter into a rate, and decides when a silent host counts as gone."""
+    """Turns the gate's event counter into a rate, and decides when a silent host counts as gone."""
 
     def __init__(self) -> None:
         self._last: OllamaInput | None = None
-        self._touched: float | None = None
         self._events: int | None = None
-        self._pulse_until = 0.0
         self._silent_since: float | None = None
 
     def update(self, state: OllamaState, now: float, dt: float = 0.0) -> OllamaInput:
@@ -83,18 +78,14 @@ class OllamaTracker:
             else:
                 # The latest GPU reading is kept: it says whether the silence is gamemode or an outage.
                 state, rate = replace(OLLAMA_DOWN, gpu=state.gpu), 0.0
-                self._touched = self._events = None
+                self._events = None
         else:
             self._silent_since = None
-            # A model that has just appeared has no earlier expiry to compare, so it does not pulse.
-            if state.touched is not None and self._touched is not None and state.touched > self._touched:
-                self._pulse_until = now + PULSE_S
-            self._touched = state.touched
             # A counter that went backwards means the gate restarted: no rate, not a burst.
             grew = state.events is not None and self._events is not None and state.events >= self._events
             rate = (state.events - self._events) / dt if grew and dt > 0 else 0.0
             self._events = state.events
-        self._last = OllamaInput(state=state, pulse=now < self._pulse_until, event_rate=rate)
+        self._last = OllamaInput(state=state, event_rate=rate)
         return self._last
 
 

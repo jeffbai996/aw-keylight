@@ -26,7 +26,6 @@ Every inference light uses the same colours:
 | Amber | A prompt is being read, and only that. It blinks at a rate that follows prompt speed, holds steady when progress stalls, and flashes at `KEYLIGHTS_COMPACT_BLINK` when the prompt is large (`KEYLIGHTS_COMPACT_TOKENS` or more uncached tokens). |
 | Steady green | The prompt is read and the first token is pending. |
 | Green flicker | Working: flickering with generated tokens, or with the GPU's power draw. |
-| White pulse | Ollama lights only: a request just finished. |
 
 - `llama` reads a llama.cpp server's slots. `#model` limits it to one model of a router. A
   server running several slots is read slot by slot: a prompt being read on any slot shows as
