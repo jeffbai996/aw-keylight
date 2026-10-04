@@ -1,8 +1,8 @@
 """Per-key colour writes to the Darfon keyboard controller (0d62:0a1c).
 
 Commands go over the USB control pipe as HID feature reports: the interrupt
-endpoints on this controller do not respond. Sequence per update: [reset,] colour
-blocks, loop (8C 13), commit (8B 01 FF). Reset is sent on a schedule, see Keyboard.
+endpoints on this controller do not respond. Sequence per update: colour blocks, commit (8B 01 FF);
+the full sequence with reset and loop (8C 13) is sent on a schedule, see Keyboard.
 """
 from __future__ import annotations
 
@@ -53,10 +53,11 @@ def diff_frame(previous: dict[int, Color], new: dict[int, Color]) -> dict[int, C
 
 
 class Keyboard:
-    """reset_interval is how often to send the reset command: at the first update, after any failed
-    write (to resync the controller), and then at most this many seconds apart. Zero resets on
-    every update, as before. Colour changes do not need it: unchanged keys keep their colour, so
-    reset cannot be clearing them, and every transfer saved is one that cannot stall."""
+    """An update is the colour block(s) and the commit (8B 01 FF): checked on hardware, the colour
+    applies without the reset and without the loop command (8C 13). The full sequence, reset first
+    and loop before the commit, is sent as a resync at the first update, after any failed write, and
+    then at most reset_interval seconds apart; zero sends it with every update, as before. Every
+    transfer saved is one that cannot stall."""
 
     def __init__(self, transport: Transport, clock: Callable[[], float] = time.monotonic, reset_interval: float = 60.0):
         self._transport = transport
@@ -77,7 +78,9 @@ class Keyboard:
         )
         steps = [("reset", _report(0x94))] if reset else []
         steps += [("colour", packet) for packet in build_color_packets(changed)]
-        steps += [("loop", _report(0x8C, 0x13)), ("update", _report(0x8B, 0x01, 0xFF))]
+        if reset:
+            steps.append(("loop", _report(0x8C, 0x13)))  # the full sequence, as a resync
+        steps.append(("update", _report(0x8B, 0x01, 0xFF)))
         try:
             for step, report in steps:
                 self._transport.send(report)
