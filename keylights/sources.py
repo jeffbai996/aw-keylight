@@ -68,6 +68,9 @@ class OllamaState:
     in_flight: int | None = None
     awaiting: int | None = None  # in flight with nothing streamed back yet: the prompt is being read
     events: int | None = None  # events streamed so far; only its growth means anything
+    # What the host's GPU is doing, when an overlay is configured: it shows work the gate cannot
+    # see, such as embeddings and whisper. None when there is no overlay or it could not be read.
+    gpu: "GpuState | None" = None
 
 
 OLLAMA_DOWN = OllamaState(up=False, loaded=False, touched=None)
@@ -203,7 +206,7 @@ def parse_expires_at(text: str) -> float | None:
         return None
 
 
-def ollama_state(get_json: GetJson) -> OllamaState:
+def ollama_state(get_json: GetJson, gpu: Callable[[], GpuState] | None = None) -> OllamaState:
     try:
         models = get_json("/api/ps")["models"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -215,8 +218,17 @@ def ollama_state(get_json: GetJson) -> OllamaState:
     in_flight, awaiting, events = _gate_activity(get_json) if chat else (None, None, None)
     return OllamaState(
         up=True, loaded=bool(chat), touched=max(stamps) if stamps else None,
-        in_flight=in_flight, awaiting=awaiting, events=events,
+        in_flight=in_flight, awaiting=awaiting, events=events, gpu=_overlay(gpu),
     )
+
+
+def _overlay(gpu: Callable[[], GpuState] | None) -> GpuState | None:
+    """The GPU reading, or None if there is none to trust: a source that is down or slow
+    must not darken a light whose own server answered."""
+    if gpu is None:
+        return None
+    reading = gpu()
+    return reading if reading.up and reading.answered else None
 
 
 def _gate_activity(get_json: GetJson) -> tuple[int | None, int | None, int | None]:
@@ -326,5 +338,9 @@ def build_sources(lights, backlight_path: str | None) -> Sources:
         elif light.kind == "gpu":
             readers[light.key] = functools.partial(gpu_state, make_http_get(light.url, 2.0), light.selector)
         else:
-            readers[light.key] = functools.partial(ollama_state, make_http_get(light.url, 2.0))
+            overlay = None
+            if light.selector:  # gpu=<telemetry url>@<host>, checked when the config was read
+                url, _, host = light.selector.removeprefix("gpu=").rpartition("@")
+                overlay = functools.partial(gpu_state, make_http_get(url, 2.0), host)
+            readers[light.key] = functools.partial(ollama_state, make_http_get(light.url, 2.0), overlay)
     return Sources(readers, backlight_path)

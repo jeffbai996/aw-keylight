@@ -92,3 +92,15 @@ def test_a_gpu_light_names_the_host_whose_gpu_it_shows():
 def test_a_gpu_light_without_a_host_is_rejected():
     with pytest.raises(ValueError):
         load_config({"KEYLIGHTS_LIGHTS": "HOME=gpu:https://s.example/squad"})
+
+
+def test_an_ollama_light_can_overlay_a_hosts_gpu_activity():
+    spec = "HOME=ollama:https://o.example:8476#gpu=https://s.example/squad@host-a"
+    (light,) = load_config({"KEYLIGHTS_LIGHTS": spec}).lights
+    assert (light.kind, light.url, light.selector) == ("ollama", "https://o.example:8476", "gpu=https://s.example/squad@host-a")
+
+
+@pytest.mark.parametrize("selector", ["gpu=https://s.example/squad", "model-x", "gpu=@host-a"])
+def test_a_malformed_ollama_gpu_overlay_is_rejected(selector):
+    with pytest.raises(ValueError):
+        load_config({"KEYLIGHTS_LIGHTS": f"HOME=ollama:https://o.example#{selector}"})

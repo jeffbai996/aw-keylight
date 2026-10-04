@@ -18,7 +18,8 @@ RESERVED_KEYS = frozenset({"ESC", "F1", "F2", "F3", "F4", "F5"})
 @dataclass(frozen=True)
 class LightSpec:
     """One light: which key shows which source. The selector narrows the source: a router
-    model for llama, the host whose GPU to show for gpu."""
+    model for llama, the host whose GPU to show for gpu, and for ollama an optional GPU overlay
+    written gpu=telemetry-url@host."""
 
     key: str
     kind: str
@@ -51,6 +52,12 @@ def _hex_color(value: str) -> Color:
     return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
 
 
+def _is_gpu_overlay(selector: str) -> bool:
+    """gpu=<telemetry url>@<host>: where to read the GPU activity that completes an ollama light."""
+    url, _, host = selector.removeprefix("gpu=").rpartition("@") if selector.startswith("gpu=") else ("", "", "")
+    return bool(url and host)
+
+
 def parse_lights(text: str) -> tuple[LightSpec, ...]:
     """KEY=kind:url[#selector], comma separated, e.g. END=llama:http://host:8080#model."""
     lights: list[LightSpec] = []
@@ -75,6 +82,8 @@ def parse_lights(text: str) -> tuple[LightSpec, ...]:
         url, _, selector = location.strip().partition("#")
         if kind == "gpu" and not selector:
             raise ValueError(f"Light '{entry}': a gpu light needs the host to show, as url#host")
+        if kind == "ollama" and selector and not _is_gpu_overlay(selector):
+            raise ValueError(f"Light '{entry}': an ollama light's selector must be gpu=telemetry-url@host")
         lights.append(LightSpec(key, kind, url, selector or None))
     return tuple(lights)
 

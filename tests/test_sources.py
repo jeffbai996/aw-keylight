@@ -436,3 +436,26 @@ def test_a_router_with_nothing_loaded_reports_every_model_parked():
 
 def test_a_busy_slot_means_the_model_is_loaded():
     assert llama_state(model_with(generating_slot())).loaded
+
+
+BURST = GpuState(up=True, power_w=140.0, limit_w=350.0, pstate="P2")
+QUIET = GpuState(up=True, power_w=37.0, limit_w=350.0, pstate="P8")
+
+
+def test_ollama_state_carries_the_gpu_overlay_when_one_is_configured():
+    assert ollama_state(ps(PS_CHAT), gpu=lambda: BURST).gpu == BURST
+
+
+def test_ollama_state_has_no_gpu_overlay_by_default():
+    assert ollama_state(ps(PS_CHAT)).gpu is None
+
+
+def test_a_gpu_overlay_that_is_down_or_slow_is_left_out_rather_than_darkening_the_light():
+    assert ollama_state(ps(PS_CHAT), gpu=lambda: GPU_DOWN).gpu is None
+    slow = GpuState(up=True, power_w=None, limit_w=None, pstate=None, answered=False)
+    assert ollama_state(ps(PS_CHAT), gpu=lambda: slow).gpu is None
+
+
+def test_the_gpu_overlay_is_read_even_when_no_chat_model_is_loaded():
+    state = ollama_state(ps(PS_EMBED), gpu=lambda: BURST)
+    assert not state.loaded and state.gpu == BURST

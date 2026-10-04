@@ -162,11 +162,11 @@ def test_unanswered_slots_poll_keeps_the_last_known_state():
     assert keyboard.frames[-1][15] == AMBER
 
 
-def test_unanswered_poll_before_any_reading_leaves_the_server_up():
+def test_unanswered_poll_before_any_reading_shows_the_server_idle():
     daemon, sources, keyboard, _ = make_daemon()
     sources.llama_value = LlamaState(up=True, processing=False, decoded=0, answered=False)
     daemon.tick(now=0.0)
-    assert keyboard.frames[-1][15] == GREEN
+    assert keyboard.frames[-1][15] == BABY_BLUE
 
 
 def test_esc_and_del_are_boosted_only_while_the_backlight_is_dim():
@@ -200,12 +200,12 @@ def test_del_flashes_amber_once_the_prompt_is_compaction_sized():
     assert collect_del(daemon, keyboard, 0.0, 0.5) == {AMBER, (0, 0, 0)}
 
 
-def test_del_returns_to_green_when_the_compaction_job_ends():
+def test_del_goes_baby_blue_when_the_large_job_ends():
     daemon, sources, keyboard, _ = make_daemon()
     sources.llama_value = compaction_reading()
     daemon.tick(now=0.0)
     sources.llama_value = UP_IDLE
-    assert collect_del(daemon, keyboard, 1.0, 1.3) == {GREEN}
+    assert collect_del(daemon, keyboard, 1.0, 1.3) == {BABY_BLUE}
 
 
 LIGHTS_ENV = {"KEYLIGHTS_LIGHTS": "F12=ollama:http://a.example,HOME=ollama:http://b.example,END=llama:http://c.example,DEL=llama:http://d.example"}
@@ -217,7 +217,7 @@ def test_each_light_reads_its_own_source():
     sources.light_values = {"END": reading(0), "DEL": UP_IDLE, "HOME": OllamaState(True, True, 100.0), "F12": OllamaState(True, False, None)}
     daemon.tick(now=0.0)
     frame = keyboard.frames[-1]
-    assert frame[END] == AMBER and frame[DEL] == GREEN and frame[HOME] == GREEN and frame[F12] == BABY_BLUE
+    assert frame[END] == AMBER and frame[DEL] == BABY_BLUE and frame[HOME] == BABY_BLUE and frame[F12] == BABY_BLUE
 
 
 def test_prompt_progress_blinks_only_the_light_whose_prompt_is_advancing():
@@ -245,20 +245,20 @@ def test_an_unanswered_poll_keeps_only_that_lights_last_state():
     }
     daemon.tick(now=0.5)
     frame = keyboard.frames[-1]
-    assert frame[END] == AMBER and frame[DEL] == GREEN
+    assert frame[END] == AMBER and frame[DEL] == BABY_BLUE
 
 
 def test_ollama_light_pulses_white_after_a_request_finishes_then_settles():
     daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
     sources.light_values = {"HOME": OllamaState(True, True, 100.0)}
     daemon.tick(now=0.0)
-    assert keyboard.frames[-1][HOME] == GREEN
+    assert keyboard.frames[-1][HOME] == BABY_BLUE
 
     sources.light_values = {"HOME": OllamaState(True, True, 101.0)}  # expiry moved: a request finished
     daemon.tick(now=1.0)
     assert keyboard.frames[-1][HOME] == WHITE
     daemon.tick(now=3.0)
-    assert keyboard.frames[-1][HOME] == GREEN
+    assert keyboard.frames[-1][HOME] == BABY_BLUE
 
 
 def test_ollama_light_does_not_pulse_when_a_model_first_appears():
@@ -267,7 +267,7 @@ def test_ollama_light_does_not_pulse_when_a_model_first_appears():
     daemon.tick(now=0.0)
     sources.light_values = {"HOME": OllamaState(True, True, 500.0)}
     daemon.tick(now=1.0)
-    assert keyboard.frames[-1][HOME] == GREEN
+    assert keyboard.frames[-1][HOME] == BABY_BLUE
 
 
 def test_a_light_whose_source_fails_goes_dark_without_stopping_the_others():
@@ -275,7 +275,7 @@ def test_a_light_whose_source_fails_goes_dark_without_stopping_the_others():
     sources.light_values = {"END": OSError("down"), "HOME": OSError("down"), "DEL": UP_IDLE}
     daemon.tick(now=0.0)
     frame = keyboard.frames[-1]
-    assert frame[END] == (0, 0, 0) and frame[HOME] == (0, 0, 0) and frame[DEL] == GREEN
+    assert frame[END] == (0, 0, 0) and frame[HOME] == (0, 0, 0) and frame[DEL] == BABY_BLUE
 
 
 def test_shutdown_restores_the_status_keys_and_every_configured_light():
@@ -367,10 +367,10 @@ def collect_key(daemon, keyboard, key, start, stop, step=0.01):
     return seen
 
 
-def test_gpu_light_is_steady_green_while_the_card_idles_and_flickers_when_it_works():
+def test_gpu_light_is_baby_blue_while_the_card_idles_and_flickers_when_it_works():
     daemon, sources, keyboard, _ = make_daemon(GPU_ENV)
     sources.light_values = {"HOME": CARD_IDLE}
-    assert collect_key(daemon, keyboard, HOME, 0.0, 0.5) == {GREEN}
+    assert collect_key(daemon, keyboard, HOME, 0.0, 0.5) == {BABY_BLUE}
     sources.light_values = {"HOME": CARD_BUSY}
     assert collect_key(daemon, keyboard, HOME, 1.0, 1.5) == {GREEN, (0, 0, 0)}
 
@@ -380,7 +380,7 @@ def test_gpu_light_goes_dark_when_its_source_fails_without_stopping_the_other_li
     sources.light_values = {"HOME": OSError("telemetry down"), "END": UP_IDLE}
     daemon.tick(now=0.0)
     frame = keyboard.frames[-1]
-    assert frame[HOME] == (0, 0, 0) and frame[END] == GREEN
+    assert frame[HOME] == (0, 0, 0) and frame[END] == BABY_BLUE
 
 
 def test_an_unanswered_gpu_poll_keeps_the_last_reading():
@@ -411,7 +411,7 @@ def test_an_ollama_host_that_stops_answering_keeps_its_light_briefly_then_goes_d
     daemon.tick(now=0.0)
     sources.light_values = {"HOME": OllamaState(True, False, None, answered=False)}
     daemon.tick(now=2.0)
-    assert keyboard.frames[-1][HOME] == GREEN  # a busy gate can be slow; the last reading stands
+    assert keyboard.frames[-1][HOME] == BABY_BLUE  # a busy gate can be slow; the last reading stands
     daemon.tick(now=8.0)
     assert keyboard.frames[-1][HOME] == (0, 0, 0)  # silent for 6 s: ollama is stopped (gamemode)
     daemon.tick(now=10.0)
@@ -430,10 +430,10 @@ def test_an_answer_resets_the_ollama_grace_period():
     sources.light_values = silent
     daemon.tick(now=5.0)
     daemon.tick(now=8.0)  # 3 s of silence since the last answer
-    assert keyboard.frames[-1][HOME] == GREEN
+    assert keyboard.frames[-1][HOME] == BABY_BLUE
 
 
-def test_a_host_that_comes_back_after_gamemode_shows_parked_blue_then_green():
+def test_a_host_that_comes_back_after_gamemode_shows_baby_blue_parked_or_loaded():
     daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
     sources.light_values = {"HOME": OSError("ollama stopped")}
     daemon.tick(now=0.0)
@@ -443,4 +443,16 @@ def test_a_host_that_comes_back_after_gamemode_shows_parked_blue_then_green():
     assert keyboard.frames[-1][HOME] == BABY_BLUE
     sources.light_values = {"HOME": OllamaState(True, True, 500.0)}
     daemon.tick(now=2.0)
-    assert keyboard.frames[-1][HOME] == GREEN
+    assert keyboard.frames[-1][HOME] == BABY_BLUE  # loaded and idle reads the same as parked
+
+
+def test_an_ollama_light_with_a_gpu_overlay_speaks_the_same_language_as_the_others():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    parked_idle = OllamaState(True, False, None, gpu=CARD_IDLE)
+    parked_working = OllamaState(True, False, None, gpu=CARD_BUSY)
+    sources.light_values = {"HOME": parked_idle}
+    assert collect_key(daemon, keyboard, HOME, 0.0, 0.5) == {BABY_BLUE}
+    sources.light_values = {"HOME": parked_working}
+    assert collect_key(daemon, keyboard, HOME, 1.0, 1.5) == {GREEN, (0, 0, 0)}
+    sources.light_values = {"HOME": OllamaState(True, True, 100.0, gpu=CARD_IDLE)}
+    assert collect_key(daemon, keyboard, HOME, 2.0, 2.5) == {BABY_BLUE}
