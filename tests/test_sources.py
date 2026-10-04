@@ -1,9 +1,12 @@
 import pytest
 
 from keylights.sources import (
+    GPU_DOWN,
+    GpuState,
     LlamaState,
     OllamaState,
     cpu_temp_c,
+    gpu_state,
     llama_state,
     net_rate,
     ollama_state,
@@ -363,3 +366,73 @@ def test_a_slow_activity_endpoint_does_not_take_down_the_loaded_state():
 def test_malformed_activity_is_ignored():
     state = ollama_state(gate([PS_CHAT], {"in_flight": "many"}))
     assert state.loaded and state.in_flight is None
+
+
+def telemetry(*hosts):
+    return lambda path, params=None: {"hosts": list(hosts)}
+
+
+def host_entry(name="host-a", ok=True, state="healthy", age=0.5, gpus=None):
+    if gpus is None:
+        gpus = [{"power_draw_w": 37.0, "power_limit_w": 350.0, "pstate": "P8", "utilization_pct": 1.0}]
+    return {"host": name, "ok": ok, "sample_state": state, "sample_age_sec": age, "gpu": gpus}
+
+
+def test_gpu_state_reads_power_limit_and_pstate_of_the_named_host():
+    state = gpu_state(telemetry(host_entry("host-b"), host_entry("host-a")), "host-a")
+    assert state == GpuState(up=True, power_w=37.0, limit_w=350.0, pstate="P8")
+
+
+def test_gpu_state_takes_the_busiest_card_of_a_host():
+    cards = [
+        {"power_draw_w": 40.0, "power_limit_w": 350.0, "pstate": "P8"},
+        {"power_draw_w": 200.0, "power_limit_w": 450.0, "pstate": "P0"},
+    ]
+    state = gpu_state(telemetry(host_entry(gpus=cards)), "host-a")
+    assert state.power_w == 200.0 and state.limit_w == 450.0 and state.pstate == "P0"
+
+
+def test_gpu_state_for_a_host_telemetry_does_not_know_is_down():
+    assert gpu_state(telemetry(host_entry("host-b")), "host-a") == GPU_DOWN
+
+
+def test_gpu_state_is_down_when_the_host_probe_failed_or_is_unhealthy_or_stale():
+    assert not gpu_state(telemetry(host_entry(ok=False)), "host-a").up
+    assert not gpu_state(telemetry(host_entry(state="stalled")), "host-a").up
+    assert not gpu_state(telemetry(host_entry(age=45.0)), "host-a").up
+
+
+def test_a_host_with_no_gpu_data_is_up_with_no_power_reading():
+    state = gpu_state(telemetry(host_entry(gpus=[])), "host-a")
+    assert state.up and state.power_w is None and state.pstate is None
+
+
+def test_gpu_state_timeout_is_busy_not_down_and_refusal_is_down():
+    def slow(path, params=None):
+        raise TimeoutError("busy")
+
+    def refused(path, params=None):
+        raise ConnectionRefusedError("refused")
+
+    assert gpu_state(slow, "host-a").up and not gpu_state(slow, "host-a").answered
+    assert not gpu_state(refused, "host-a").up
+
+
+def test_a_router_with_the_model_loaded_reports_it_loaded():
+    get = FakeLlama({"a": "loaded", "b": "unloaded"}, {"a": [slot(False, 0)]})
+    assert llama_state(get, only_model="a").loaded and llama_state(get).loaded
+
+
+def test_a_router_without_the_model_loaded_reports_it_parked_but_up():
+    get = FakeLlama({"a": "loaded", "b": "unloaded"}, {"a": [slot(False, 0)]})
+    state = llama_state(get, only_model="b")
+    assert state.up and not state.loaded and not state.processing
+
+
+def test_a_router_with_nothing_loaded_reports_every_model_parked():
+    get = FakeLlama({"a": "unloaded", "b": "unloaded"}, {})
+    assert llama_state(get).up and not llama_state(get).loaded
+
+
+def test_a_busy_slot_means_the_model_is_loaded():
+    assert llama_state(model_with(generating_slot())).loaded

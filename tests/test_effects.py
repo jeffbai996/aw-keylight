@@ -1,5 +1,9 @@
 from keylights.effects import (
     AMBER,
+    BABY_BLUE,
+    GpuInput,
+    gpu_blink_rate,
+    gpu_color,
     WHITE,
     InferenceInput,
     OllamaInput,
@@ -20,7 +24,7 @@ from keylights.effects import (
     temp_color,
 )
 from keylights.keymap import key_id
-from keylights.sources import LlamaState, OllamaState
+from keylights.sources import GPU_DOWN, GpuState, LlamaState, OllamaState
 
 BASE = (255, 255, 255)
 UP_IDLE = LlamaState(up=True, processing=False, decoded=0)
@@ -224,8 +228,11 @@ def test_ollama_light_is_green_while_a_chat_model_is_loaded():
     assert ollama_color(OLLAMA_LOADED, pulse=False) == GREEN
 
 
-def test_ollama_light_is_dark_when_nothing_is_loaded_or_the_server_is_down():
-    assert ollama_color(OLLAMA_EMPTY, pulse=False) == OFF
+def test_ollama_light_is_baby_blue_when_the_server_is_up_but_no_chat_model_is_loaded():
+    assert ollama_color(OLLAMA_EMPTY, pulse=False) == BABY_BLUE
+
+
+def test_ollama_light_is_dark_only_when_the_server_is_unreachable():
     assert ollama_color(OLLAMA_DOWN, pulse=False) == OFF
 
 
@@ -347,3 +354,73 @@ def test_frame_shows_green_flicker_for_a_large_job_that_is_generating():
     live = inputs(llama=COMPACT_DECODING, token_rate=8.0)
     colors = {build_frame(live, t / 100, BASE, compact_tokens=12288, compact_blink=10.0)[15] for t in range(40)}
     assert colors == {GREEN, OFF}
+
+
+GPU_IDLE = GpuState(up=True, power_w=37.0, limit_w=350.0, pstate="P8")
+GPU_BURST = GpuState(up=True, power_w=140.0, limit_w=350.0, pstate="P2")
+GPU_TAIL = GpuState(up=True, power_w=54.0, limit_w=350.0, pstate="P5")
+
+
+def test_gpu_light_is_steady_green_while_the_card_idles():
+    assert {gpu_color(GPU_IDLE, t / 10) for t in range(10)} == {GREEN}
+
+
+def test_gpu_light_flickers_green_while_the_card_works():
+    assert {gpu_color(GPU_BURST, t / 100, cap=25.0) for t in range(60)} == {GREEN, OFF}
+
+
+def test_gpu_light_is_dark_when_the_host_is_down():
+    assert gpu_color(GPU_DOWN, 0.1) == OFF
+
+
+def test_gpu_flicker_speeds_up_with_power_draw():
+    assert gpu_blink_rate(GPU_BURST, 25.0) > gpu_blink_rate(GPU_TAIL, 25.0) > 0
+
+
+def test_gpu_flicker_is_capped():
+    full = GpuState(up=True, power_w=350.0, limit_w=350.0, pstate="P0")
+    assert gpu_blink_rate(full, 10.0) == 10.0
+
+
+def test_gpu_activity_falls_back_to_power_share_when_the_pstate_is_missing():
+    assert gpu_blink_rate(GpuState(True, 140.0, 350.0, None), 25.0) > 0
+    assert gpu_blink_rate(GpuState(True, 37.0, 350.0, None), 25.0) == 0
+
+
+def test_a_gpu_with_no_power_reading_reads_as_idle():
+    unknown = GpuState(up=True, power_w=None, limit_w=None, pstate=None)
+    assert gpu_blink_rate(unknown, 25.0) == 0 and gpu_color(unknown, 0.3) == GREEN
+
+
+def test_frame_shows_a_gpu_light_from_its_power_state():
+    busy = {key_id("HOME"): GpuInput(GPU_BURST)}
+    idle = {key_id("HOME"): GpuInput(GPU_IDLE)}
+    assert {build_frame(inputs(lights=busy), t / 100, BASE, del_cap=25.0)[key_id("HOME")] for t in range(60)} == {GREEN, OFF}
+    assert build_frame(inputs(lights=idle), 0.3, BASE)[key_id("HOME")] == GREEN
+
+
+def test_power_state_counts_a_gpu_light_as_up_only_while_its_host_is():
+    assert power_state({key_id("HOME"): GpuInput(GPU_IDLE)}).up
+    assert not power_state({key_id("HOME"): GpuInput(GPU_DOWN)}).up
+
+
+PARKED = LlamaState(up=True, processing=False, decoded=0, loaded=False)
+
+
+def test_a_llama_server_with_its_model_parked_shows_baby_blue_not_dark():
+    assert {del_color(PARKED, 0.0, t / 10) for t in range(10)} == {BABY_BLUE}
+
+
+def test_a_llama_server_that_is_down_is_the_only_dark_one():
+    assert del_color(DOWN, 0.0, 0.3) == OFF
+    assert del_color(UP_IDLE, 0.0, 0.3) == GREEN  # loaded and idle stays green
+
+
+def test_frame_shows_parked_hosts_as_baby_blue():
+    lights = {key_id("DEL"): InferenceInput(PARKED), key_id("END"): OllamaInput(OLLAMA_EMPTY, pulse=False)}
+    frame = build_frame(inputs(lights=lights), 0.0, BASE)
+    assert frame[key_id("DEL")] == BABY_BLUE and frame[key_id("END")] == BABY_BLUE
+
+
+def test_power_state_counts_a_parked_ollama_host_as_up():
+    assert power_state({key_id("END"): OllamaInput(OLLAMA_EMPTY, pulse=False)}).up

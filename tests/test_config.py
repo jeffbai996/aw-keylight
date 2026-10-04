@@ -82,3 +82,13 @@ def test_no_lights_are_configured_by_default():
 def test_bad_lights_specs_are_rejected(spec):
     with pytest.raises(ValueError):
         load_config({"KEYLIGHTS_LIGHTS": spec})
+
+
+def test_a_gpu_light_names_the_host_whose_gpu_it_shows():
+    (light,) = load_config({"KEYLIGHTS_LIGHTS": "HOME=gpu:https://s.example/squad#host-a"}).lights
+    assert (light.key, light.kind, light.url, light.selector) == ("HOME", "gpu", "https://s.example/squad", "host-a")
+
+
+def test_a_gpu_light_without_a_host_is_rejected():
+    with pytest.raises(ValueError):
+        load_config({"KEYLIGHTS_LIGHTS": "HOME=gpu:https://s.example/squad"})

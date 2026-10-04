@@ -10,19 +10,20 @@ from .keymap import UnknownKeyError, key_id
 Color = tuple[int, int, int]
 
 
-LIGHT_KINDS = ("llama", "ollama")
+LIGHT_KINDS = ("llama", "ollama", "gpu")
 # Keys the status lights already drive; a light cannot claim them.
 RESERVED_KEYS = frozenset({"ESC", "F1", "F2", "F3", "F4", "F5"})
 
 
 @dataclass(frozen=True)
 class LightSpec:
-    """One inference light: which key shows which server, optionally one router model."""
+    """One light: which key shows which source. The selector narrows the source: a router
+    model for llama, the host whose GPU to show for gpu."""
 
     key: str
     kind: str
     url: str
-    model: str | None = None
+    selector: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,7 @@ def _hex_color(value: str) -> Color:
 
 
 def parse_lights(text: str) -> tuple[LightSpec, ...]:
-    """KEY=kind:url[#model], comma separated, e.g. END=llama:http://host:8080#model."""
+    """KEY=kind:url[#selector], comma separated, e.g. END=llama:http://host:8080#model."""
     lights: list[LightSpec] = []
     for entry in (part.strip() for part in text.split(",")):
         if not entry:
@@ -71,8 +72,10 @@ def parse_lights(text: str) -> tuple[LightSpec, ...]:
             raise ValueError(f"Light '{entry}': {key} is used by a status light")
         if any(light.key == key for light in lights):
             raise ValueError(f"Light '{entry}': {key} is configured twice")
-        url, _, model = location.strip().partition("#")
-        lights.append(LightSpec(key, kind, url, model or None))
+        url, _, selector = location.strip().partition("#")
+        if kind == "gpu" and not selector:
+            raise ValueError(f"Light '{entry}': a gpu light needs the host to show, as url#host")
+        lights.append(LightSpec(key, kind, url, selector or None))
     return tuple(lights)
 
 

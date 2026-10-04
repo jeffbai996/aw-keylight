@@ -1,14 +1,17 @@
 """Turns successive readings of one server into what its key shows. No I/O."""
 from __future__ import annotations
 
-from .effects import InferenceInput, OllamaInput
-from .sources import LlamaState, OllamaState, token_rate
+from .effects import GpuInput, InferenceInput, OllamaInput
+from .sources import OLLAMA_DOWN, GpuState, LlamaState, OllamaState, token_rate
 
 # The server evaluates the prompt in batches and answers /slots between them, so
 # progress arrives in lumps seconds apart. Blinking holds this long after the last one.
 PROMPT_ADVANCE_HOLD_S = 6.0
 # How long a light stays white after an Ollama request finishes.
 PULSE_S = 0.4
+# How long a silent Ollama host keeps its last reading. A stopped Ollama (gamemode) makes the gate
+# hang on a WSL host with mirrored networking instead of refusing, so silence has to end in "dark".
+OLLAMA_SILENCE_GRACE_S = 5.0
 
 
 class LlamaTracker:
@@ -56,20 +59,30 @@ class LlamaTracker:
 
 
 class OllamaTracker:
-    """Detects finished requests from the model expiry moving forward, and turns the
-    gate's event counter into a rate."""
+    """Detects finished requests from the model expiry moving forward, turns the gate's
+    event counter into a rate, and decides when a silent host counts as gone."""
 
     def __init__(self) -> None:
         self._last: OllamaInput | None = None
         self._touched: float | None = None
         self._events: int | None = None
         self._pulse_until = 0.0
+        self._silent_since: float | None = None
 
     def update(self, state: OllamaState, now: float, dt: float = 0.0) -> OllamaInput:
         last = self._last
-        if state.up and not state.answered and last is not None and last.state.up:
-            state, rate = last.state, last.event_rate  # a busy server stops answering; keep what it last said
+        if state.up and not state.answered:
+            # A busy gate can be slow, so a silent host keeps its last reading for a moment. Past
+            # that it is treated as unreachable: with Ollama stopped the gate does not refuse, it hangs.
+            if self._silent_since is None:
+                self._silent_since = now
+            if last is not None and last.state.up and now - self._silent_since < OLLAMA_SILENCE_GRACE_S:
+                state, rate = last.state, last.event_rate
+            else:
+                state, rate = OLLAMA_DOWN, 0.0
+                self._touched = self._events = None
         else:
+            self._silent_since = None
             # A model that has just appeared has no earlier expiry to compare, so it does not pulse.
             if state.touched is not None and self._touched is not None and state.touched > self._touched:
                 self._pulse_until = now + PULSE_S
@@ -79,4 +92,18 @@ class OllamaTracker:
             rate = (state.events - self._events) / dt if grew and dt > 0 else 0.0
             self._events = state.events
         self._last = OllamaInput(state=state, pulse=now < self._pulse_until, event_rate=rate)
+        return self._last
+
+
+class GpuTracker:
+    """A GPU reading is already instantaneous, so only a busy source needs handling."""
+
+    def __init__(self) -> None:
+        self._last: GpuInput | None = None
+
+    def update(self, state: GpuState, now: float, dt: float = 0.0) -> GpuInput:
+        last = self._last
+        if state.up and not state.answered and last is not None and last.state.up:
+            return last  # a busy source stops answering; keep what it last said
+        self._last = GpuInput(state=state)
         return self._last

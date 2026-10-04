@@ -16,10 +16,14 @@ from .config import Config
 from .device import DeviceError
 from .effects import Inputs, build_frame, managed_keys, power_state
 from .keymap import key_id
-from .sources import LLAMA_DOWN, OLLAMA_DOWN, net_rate
-from .trackers import LlamaTracker, OllamaTracker
+from .sources import GPU_DOWN, LLAMA_DOWN, OLLAMA_DOWN, net_rate
+from .trackers import GpuTracker, LlamaTracker, OllamaTracker
 
 log = logging.getLogger(__name__)
+
+# One tracker class and one "source is down" state per kind of light.
+TRACKERS = {"llama": LlamaTracker, "ollama": OllamaTracker, "gpu": GpuTracker}
+DOWN_STATES = {"llama": LLAMA_DOWN, "ollama": OLLAMA_DOWN, "gpu": GPU_DOWN}
 
 
 class Daemon:
@@ -29,10 +33,7 @@ class Daemon:
         self._power = power
         self._config = config
         self._inputs = Inputs(net_bytes_per_s=0.0, temp_c=None, muted=False)
-        self._trackers = {
-            key_id(light.key): LlamaTracker() if light.kind == "llama" else OllamaTracker()
-            for light in config.lights
-        }
+        self._trackers = {key_id(light.key): TRACKERS[light.kind]() for light in config.lights}
         self._last_fast: float | None = None
         self._last_slow: float | None = None
         self._prev_net: tuple[int, float] | None = None
@@ -78,8 +79,9 @@ class Daemon:
         lights = {}
         for light in self._config.lights:
             key = key_id(light.key)
-            down = LLAMA_DOWN if light.kind == "llama" else OLLAMA_DOWN
-            state = self._safe(lambda name=light.key: self._sources.inference(name), down, f"{light.key} inference")
+            state = self._safe(
+                lambda name=light.key: self._sources.inference(name), DOWN_STATES[light.kind], f"{light.key} inference"
+            )
             tracker = self._trackers[key]
             lights[key] = tracker.update(state, now, dt)
 

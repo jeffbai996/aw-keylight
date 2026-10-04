@@ -6,18 +6,24 @@ from typing import Mapping, Union
 
 from .config import Color
 from .keymap import key_id
-from .sources import LlamaState, OllamaState
+from .sources import GpuState, LlamaState, OllamaState
 
 OFF: Color = (0, 0, 0)
 GREEN: Color = (0, 255, 0)
 AMBER: Color = (255, 140, 0)
 RED: Color = (255, 0, 0)
 WHITE: Color = (255, 255, 255)
+# A host that is up with its model parked. Dark is kept for a vacant GPU: gamemode, or a server that is down.
+BABY_BLUE: Color = (100, 180, 255)
 NET_IDLE: Color = (0, 10, 20)
 NET_ACTIVE: Color = (0, 170, 255)
 
 TOKENS_PER_BLINK = 2.0
 PROMPT_TOKENS_PER_BLINK = 100.0
+GPU_IDLE_PSTATE = "P8"
+GPU_IDLE_POWER_SHARE = 0.15  # with no pstate reported, below this share of the power limit the card is idle
+GPU_BLINKS_AT_FULL_POWER = 40.0
+MIN_GPU_BLINK = 2.0  # a card that is working has to read as flickering, not steady
 OLLAMA_AWAITING_BLINK = 4.0  # blinks a second while a gate waits for a request's first event
 MIN_PROMPT_BLINK = 2.0  # slow prompt progress still has to read as blinking, not steady
 BYTES_PER_BLINK = 10_000.0
@@ -44,7 +50,12 @@ class OllamaInput:
     event_rate: float = 0.0  # events streamed per second, from the gate's counter
 
 
-Light = Union[InferenceInput, OllamaInput]
+@dataclass(frozen=True)
+class GpuInput:
+    state: GpuState
+
+
+Light = Union[InferenceInput, OllamaInput, GpuInput]
 
 
 @dataclass(frozen=True)
@@ -110,6 +121,8 @@ def del_color(
     when idle or done, flickering with generated tokens, whatever the job's size."""
     if not state.up:
         return OFF
+    if not state.loaded:
+        return BABY_BLUE
     if state.reading:
         if compaction:
             return AMBER if blink_on(rate, t) else OFF
@@ -137,14 +150,36 @@ def ollama_color(
 ) -> Color:
     """Ollama light. With the gate's live counters: amber blink while a prompt is read, green
     flicker with streamed events (about one per token). Without them, or when idle: green
-    while a chat model is loaded and a white pulse as a request finishes. Dark otherwise."""
-    if not (state.up and state.loaded):
+    while a chat model is loaded and a white pulse as a request finishes. Baby blue when the
+    server is up with nothing loaded; dark only when it is unreachable (gamemode stops it)."""
+    if not state.up:
         return OFF
+    if not state.loaded:
+        return BABY_BLUE
     if state.in_flight:
         if state.awaiting:
             return AMBER if blink_on(OLLAMA_AWAITING_BLINK, t) else OFF
         return GREEN if blink_on(blink_rate(event_rate, cap), t) else OFF
     return WHITE if pulse else GREEN
+
+
+def gpu_blink_rate(state: GpuState, cap: float = 20.0) -> float:
+    """Zero while the card idles; otherwise faster the closer its power draw is to the limit."""
+    if not state.up or state.power_w is None or not state.limit_w:
+        return 0.0
+    share = state.power_w / state.limit_w
+    active = state.pstate != GPU_IDLE_PSTATE if state.pstate else share >= GPU_IDLE_POWER_SHARE
+    if not active:
+        return 0.0
+    return min(cap, max(MIN_GPU_BLINK, share * GPU_BLINKS_AT_FULL_POWER))
+
+
+def gpu_color(state: GpuState, t: float, cap: float = 20.0) -> Color:
+    """Green while the host is up, flickering while its GPU works. There is no read phase
+    to show, so there is no amber."""
+    if not state.up:
+        return OFF
+    return GREEN if blink_on(gpu_blink_rate(state, cap), t) else OFF
 
 
 def _inference_color(
@@ -167,8 +202,10 @@ def power_state(lights: Mapping[int, Light]) -> LlamaState:
     inference = [light for light in lights.values() if isinstance(light, InferenceInput)]
     if any(light.state.reading for light in inference):
         return LlamaState(up=True, processing=True, decoded=0)
-    up = any(light.state.up for light in inference) or any(
-        light.state.up and light.state.loaded for light in lights.values() if isinstance(light, OllamaInput)
+    up = (
+        any(light.state.up for light in inference)
+        or any(light.state.up for light in lights.values() if isinstance(light, OllamaInput))
+        or any(light.state.up for light in lights.values() if isinstance(light, GpuInput))
     )
     return LlamaState(up=up, processing=False, decoded=0)
 
@@ -195,6 +232,8 @@ def build_frame(
     for key, light in inputs.lights.items():
         if isinstance(light, InferenceInput):
             color = _inference_color(light, t, del_cap, compact_tokens, compact_blink)
+        elif isinstance(light, GpuInput):
+            color = gpu_color(light.state, t, del_cap)
         else:
             color = ollama_color(light.state, light.pulse, t, light.event_rate, del_cap)
         frame[key] = boost_color(color, boost)

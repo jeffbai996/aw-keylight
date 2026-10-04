@@ -36,6 +36,8 @@ class LlamaState:
     prompt_phase: bool | None = None
     # The largest prompt_done of any busy slot. Compaction is judged per slot, never summed.
     peak_prompt_done: int | None = None
+    # False when the server is up but the model is not resident (parked). A busy slot implies True.
+    loaded: bool = True
 
     @property
     def reading(self) -> bool:
@@ -69,6 +71,23 @@ class OllamaState:
 
 
 OLLAMA_DOWN = OllamaState(up=False, loaded=False, touched=None)
+
+
+@dataclass(frozen=True)
+class GpuState:
+    """What a host's GPU is doing, from a fleet status server's telemetry. Power draw and performance
+    state show a short burst of work that utilisation, sampled coarsely, misses."""
+
+    up: bool
+    power_w: float | None
+    limit_w: float | None
+    pstate: str | None  # P8 is the idle state
+    answered: bool = True
+
+
+GPU_DOWN = GpuState(up=False, power_w=None, limit_w=None, pstate=None)
+# A host whose last probe is older than this is not trusted to be showing the card now.
+GPU_MAX_SAMPLE_AGE_S = 30.0
 # Embedders such as the fleet's bge-m3 stay loaded all day and are not inference.
 EMBEDDING_MODEL = re.compile(r"bge|embed|nomic|minilm|mxbai|e5-|gte-", re.IGNORECASE)
 _EXCESS_FRACTION = re.compile(r"(\.\d{6})\d+")
@@ -123,12 +142,14 @@ def llama_state(get_json: GetJson, only_model: str | None = None) -> LlamaState:
         return LLAMA_DOWN
 
     answered = True
+    loaded = False
     rows: list[tuple[int, int | None, int | None]] = []  # busy slots: (decoded, prompt_new, prompt_done)
     for model in models:
         if only_model is not None and model.get("id") != only_model:
             continue
         if model.get("status", {}).get("value") != "loaded":
             continue
+        loaded = True
         try:
             slots = get_json("/slots", {"model": model["id"], "autoload": "false"})
         except (OSError, ValueError) as exc:
@@ -142,13 +163,13 @@ def llama_state(get_json: GetJson, only_model: str | None = None) -> LlamaState:
             has_prompt = isinstance(total, int) and isinstance(processed, int)
             new = max(0, total - int(slot.get("n_prompt_tokens_cache") or 0)) if has_prompt else None
             rows.append((_slot_decoded(slot), new, processed if has_prompt else None))
-    return _merge_slots(rows, answered)
+    return _merge_slots(rows, answered, loaded)
 
 
-def _merge_slots(rows: list[tuple[int, int | None, int | None]], answered: bool) -> LlamaState:
+def _merge_slots(rows: list[tuple[int, int | None, int | None]], answered: bool, loaded: bool) -> LlamaState:
     """One state for a server whose slots may be doing different things at once."""
     if not rows:
-        return LlamaState(up=True, processing=False, decoded=0, answered=answered)
+        return LlamaState(up=True, processing=False, decoded=0, answered=answered, loaded=loaded)
 
     def is_reading(row) -> bool:
         decoded, new, done = row
@@ -209,6 +230,26 @@ def _gate_activity(get_json: GetJson) -> tuple[int | None, int | None, int | Non
     if not all(isinstance(v, int) and not isinstance(v, bool) for v in values):
         return None, None, None
     return values
+
+
+def gpu_state(get_json: GetJson, host: str) -> GpuState:
+    try:
+        hosts = get_json("/api/telemetry")["hosts"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        if _is_timeout(exc):
+            return GpuState(up=True, power_w=None, limit_w=None, pstate=None, answered=False)
+        return GPU_DOWN
+    entry = next((h for h in hosts if isinstance(h, dict) and h.get("host") == host), None)
+    if entry is None or not entry.get("ok") or entry.get("sample_state") != "healthy":
+        return GPU_DOWN
+    age = entry.get("sample_age_sec")
+    if not isinstance(age, (int, float)) or age > GPU_MAX_SAMPLE_AGE_S:
+        return GPU_DOWN
+    cards = [card for card in entry.get("gpu") or [] if isinstance(card, dict)]
+    if not cards:
+        return GpuState(up=True, power_w=None, limit_w=None, pstate=None)
+    card = max(cards, key=lambda c: c.get("power_draw_w") or 0.0)
+    return GpuState(up=True, power_w=card.get("power_draw_w"), limit_w=card.get("power_limit_w"), pstate=card.get("pstate"))
 
 
 def read_backlight_state(path: str | Path) -> str | None:
@@ -277,11 +318,13 @@ class Sources:
 
 
 def build_sources(lights, backlight_path: str | None) -> Sources:
-    """One reader per configured light; llama.cpp and Ollama servers answer differently."""
+    """One reader per configured light; llama.cpp, Ollama and GPU telemetry answer differently."""
     readers: dict[str, Callable[[], Any]] = {}
     for light in lights:
         if light.kind == "llama":
-            readers[light.key] = functools.partial(llama_state, make_http_get(light.url, 1.0), light.model)
+            readers[light.key] = functools.partial(llama_state, make_http_get(light.url, 1.0), light.selector)
+        elif light.kind == "gpu":
+            readers[light.key] = functools.partial(gpu_state, make_http_get(light.url, 2.0), light.selector)
         else:
             readers[light.key] = functools.partial(ollama_state, make_http_get(light.url, 2.0))
     return Sources(readers, backlight_path)

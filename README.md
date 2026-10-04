@@ -5,7 +5,7 @@ and lighting chip `187c:0550`).
 
 | Light | Shows |
 |---|---|
-| DEL | Inference server. Amber means a prompt is being read, and only that: blinking at a rate that follows prompt speed while it advances, steady when it has stalled, and flashing at `KEYLIGHTS_COMPACT_BLINK` when the prompt is large (`KEYLIGHTS_COMPACT_TOKENS` or more uncached tokens). Green after that: steady while the first token is pending and when idle or done, flickering with generated tokens. Off when the server is down. |
+| DEL | Inference server. Amber means a prompt is being read, and only that: blinking at a rate that follows prompt speed while it advances, steady when it has stalled, and flashing at `KEYLIGHTS_COMPACT_BLINK` when the prompt is large (`KEYLIGHTS_COMPACT_TOKENS` or more uncached tokens). Green after that: steady while the first token is pending and when idle or done, flickering with generated tokens. Baby blue when the server is up with its model parked. Dark only when the server is unreachable. |
 | ESC | Network traffic on this machine. Faint blue when idle, blinks with traffic (up to `KEYLIGHTS_ESC_BLINK_CAP` blinks/s). |
 | F1-F4 | CPU temperature. Green at 45 C through yellow to red at 90 C. |
 | F5 | Red while the default microphone is muted. |
@@ -24,8 +24,16 @@ Inference lights are configured per key with `KEYLIGHTS_LIGHTS`, a comma-separat
   Ollama itself reports no busy state, so live activity comes from the gate in front of it
   (`GET /_gate/activity` on an ollama-gate): while a request has streamed nothing yet the key
   blinks amber, and while events stream it flickers green at their rate. Without that endpoint
-  the key shows only loaded and the finished-request pulse. Embedding models are ignored, and
-  the key is dark when no chat model is loaded or the server is unreachable.
+  the key shows only loaded and the finished-request pulse. Embedding models are ignored. Baby
+  blue when the server is up with no chat model loaded (parked). Dark only when it is
+  unreachable or has been silent for 5 seconds: gamemode stops Ollama, and on a WSL host with
+  mirrored networking the gate then hangs instead of refusing, so silence has to end in dark.
+- `gpu` shows a host's GPU from a fleet status server's `/api/telemetry`. The URL is that
+  server's base and `#host` names the host, for example `HOME=gpu:https://status.example/squad#host-a`. Steady green
+  while the card idles, flickering green faster as its power draw rises, dark when the host or
+  its telemetry is unreachable. Power draw and performance state are used because utilisation,
+  sampled coarsely, misses short bursts. It sees embeddings, whisper and anything else that
+  uses the card, which the gate cannot.
 - `KEYLIGHTS_LLAMA_URL` alone still means "DEL shows this llama.cpp server".
 - ESC and F1-F5 belong to the status lights and cannot be used. Keys that are not configured
   keep the keyboard's own colours.

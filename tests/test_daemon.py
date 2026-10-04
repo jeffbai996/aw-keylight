@@ -1,8 +1,8 @@
 from keylights.config import load_config
 from keylights.daemon import Daemon
 from keylights.device import DeviceError
-from keylights.effects import AMBER, GREEN, NET_IDLE, WHITE
-from keylights.sources import LlamaState, OllamaState
+from keylights.effects import AMBER, BABY_BLUE, GREEN, NET_IDLE, WHITE
+from keylights.sources import GPU_DOWN, GpuState, LlamaState, OllamaState
 
 BASE = (255, 255, 255)
 UP_IDLE = LlamaState(up=True, processing=False, decoded=0)
@@ -217,7 +217,7 @@ def test_each_light_reads_its_own_source():
     sources.light_values = {"END": reading(0), "DEL": UP_IDLE, "HOME": OllamaState(True, True, 100.0), "F12": OllamaState(True, False, None)}
     daemon.tick(now=0.0)
     frame = keyboard.frames[-1]
-    assert frame[END] == AMBER and frame[DEL] == GREEN and frame[HOME] == GREEN and frame[F12] == (0, 0, 0)
+    assert frame[END] == AMBER and frame[DEL] == GREEN and frame[HOME] == GREEN and frame[F12] == BABY_BLUE
 
 
 def test_prompt_progress_blinks_only_the_light_whose_prompt_is_advancing():
@@ -350,3 +350,97 @@ def test_del_goes_green_once_a_large_prompt_has_been_read_and_tokens_flow():
         colors.add(keyboard.frames[-1][15])
         t += 0.01
     assert AMBER not in colors and GREEN in colors
+
+
+GPU_ENV = {"KEYLIGHTS_LIGHTS": "HOME=gpu:http://s.example/squad#host-a,END=llama:http://c.example"}
+CARD_IDLE = GpuState(up=True, power_w=37.0, limit_w=350.0, pstate="P8")
+CARD_BUSY = GpuState(up=True, power_w=140.0, limit_w=350.0, pstate="P2")
+
+
+def collect_key(daemon, keyboard, key, start, stop, step=0.01):
+    seen = set()
+    t = start
+    while t <= stop:
+        daemon.tick(now=t)
+        seen.add(keyboard.frames[-1][key])
+        t += step
+    return seen
+
+
+def test_gpu_light_is_steady_green_while_the_card_idles_and_flickers_when_it_works():
+    daemon, sources, keyboard, _ = make_daemon(GPU_ENV)
+    sources.light_values = {"HOME": CARD_IDLE}
+    assert collect_key(daemon, keyboard, HOME, 0.0, 0.5) == {GREEN}
+    sources.light_values = {"HOME": CARD_BUSY}
+    assert collect_key(daemon, keyboard, HOME, 1.0, 1.5) == {GREEN, (0, 0, 0)}
+
+
+def test_gpu_light_goes_dark_when_its_source_fails_without_stopping_the_other_lights():
+    daemon, sources, keyboard, _ = make_daemon(GPU_ENV)
+    sources.light_values = {"HOME": OSError("telemetry down"), "END": UP_IDLE}
+    daemon.tick(now=0.0)
+    frame = keyboard.frames[-1]
+    assert frame[HOME] == (0, 0, 0) and frame[END] == GREEN
+
+
+def test_an_unanswered_gpu_poll_keeps_the_last_reading():
+    daemon, sources, keyboard, _ = make_daemon(GPU_ENV)
+    sources.light_values = {"HOME": CARD_BUSY}
+    daemon.tick(now=0.0)
+    sources.light_values = {"HOME": GpuState(up=True, power_w=None, limit_w=None, pstate=None, answered=False)}
+    assert collect_key(daemon, keyboard, HOME, 0.5, 1.0) == {GREEN, (0, 0, 0)}
+
+
+def test_parked_hosts_show_baby_blue_and_unreachable_ones_stay_dark():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    sources.light_values = {
+        "END": LlamaState(up=True, processing=False, decoded=0, loaded=False),   # router up, model parked
+        "HOME": OllamaState(True, False, None),                                 # ollama up, nothing loaded
+        "F12": OSError("ollama stopped"),                                       # gamemode: ollama is not running
+        "DEL": OSError("server down"),
+    }
+    daemon.tick(now=0.0)
+    frame = keyboard.frames[-1]
+    assert frame[END] == BABY_BLUE and frame[HOME] == BABY_BLUE
+    assert frame[F12] == (0, 0, 0) and frame[DEL] == (0, 0, 0)
+
+
+def test_an_ollama_host_that_stops_answering_keeps_its_light_briefly_then_goes_dark():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    sources.light_values = {"HOME": OllamaState(True, True, 100.0)}
+    daemon.tick(now=0.0)
+    sources.light_values = {"HOME": OllamaState(True, False, None, answered=False)}
+    daemon.tick(now=2.0)
+    assert keyboard.frames[-1][HOME] == GREEN  # a busy gate can be slow; the last reading stands
+    daemon.tick(now=8.0)
+    assert keyboard.frames[-1][HOME] == (0, 0, 0)  # silent for 6 s: ollama is stopped (gamemode)
+    daemon.tick(now=10.0)
+    assert keyboard.frames[-1][HOME] == (0, 0, 0)  # and it stays dark, not parked-blue, while silent
+
+
+def test_an_answer_resets_the_ollama_grace_period():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    silent = {"HOME": OllamaState(True, False, None, answered=False)}
+    sources.light_values = {"HOME": OllamaState(True, True, 100.0)}
+    daemon.tick(now=0.0)
+    sources.light_values = silent
+    daemon.tick(now=3.0)
+    sources.light_values = {"HOME": OllamaState(True, True, 100.0)}
+    daemon.tick(now=4.0)
+    sources.light_values = silent
+    daemon.tick(now=5.0)
+    daemon.tick(now=8.0)  # 3 s of silence since the last answer
+    assert keyboard.frames[-1][HOME] == GREEN
+
+
+def test_a_host_that_comes_back_after_gamemode_shows_parked_blue_then_green():
+    daemon, sources, keyboard, _ = make_daemon(LIGHTS_ENV)
+    sources.light_values = {"HOME": OSError("ollama stopped")}
+    daemon.tick(now=0.0)
+    assert keyboard.frames[-1][HOME] == (0, 0, 0)
+    sources.light_values = {"HOME": OllamaState(True, False, None)}  # ollama back, model not warmed yet
+    daemon.tick(now=1.0)
+    assert keyboard.frames[-1][HOME] == BABY_BLUE
+    sources.light_values = {"HOME": OllamaState(True, True, 500.0)}
+    daemon.tick(now=2.0)
+    assert keyboard.frames[-1][HOME] == GREEN
