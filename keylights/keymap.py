@@ -1,7 +1,8 @@
 """Key names to AlienFX v5 key IDs.
 
 IDs come from the alienfx-tools layout for the Darfon keyboard controller
-(0d62:0a1c). Only DEL is verified on hardware; the rest follow the same table.
+(0d62:0a1c). ESC, F1-F12, HOME, END and DEL are verified on an m15 R2; the rest follow the
+same table.
 """
 
 _KEYS = {
