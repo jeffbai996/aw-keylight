@@ -188,13 +188,13 @@ def commands(transport):
     return [(r[1], r[2]) for r in transport.sent]
 
 
-def test_an_update_between_resets_sends_only_the_colour_and_the_commit():
+def test_an_update_between_resets_sends_only_the_colour():
     transport = FakeTransport()
     keyboard = Keyboard(transport, clock=lambda: 0.0, reset_interval=60.0)
     keyboard.update({15: RED})
     transport.sent.clear()
     keyboard.update({15: GREEN})
-    assert commands(transport) == [(0x8C, 0x02), (0x8B, 0x01)]  # colour block, then update: no reset, no loop
+    assert commands(transport) == [(0x8C, 0x02)]  # the colour block alone: no reset, no loop, no commit
 
 
 def test_the_update_that_carries_a_reset_is_the_full_sequence():
@@ -213,10 +213,10 @@ def test_a_zero_interval_keeps_the_full_sequence_on_every_update():
     assert commands(transport) == [(0x94, 0x00), (0x8C, 0x02), (0x8C, 0x13), (0x8B, 0x01)]
 
 
-def test_a_stall_in_a_light_update_names_the_commit_step():
+def test_a_stall_in_a_light_update_names_the_colour_step():
     transport = FakeTransport()
     keyboard = Keyboard(transport, clock=lambda: 0.0, reset_interval=60.0)
     keyboard.update({15: RED})
-    transport.fail_after = len(transport.sent) + 1  # let the colour block through, fail the next report
-    with pytest.raises(DeviceError, match="at update"):
+    transport.fail_after = len(transport.sent)
+    with pytest.raises(DeviceError, match="at colour"):
         keyboard.update({15: GREEN})

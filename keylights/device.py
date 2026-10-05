@@ -53,10 +53,10 @@ def diff_frame(previous: dict[int, Color], new: dict[int, Color]) -> dict[int, C
 
 
 class Keyboard:
-    """An update is the colour block(s) and the commit (8B 01 FF): checked on hardware, the colour
-    applies without the reset and without the loop command (8C 13). The full sequence, reset first
-    and loop before the commit, is sent as a resync at the first update, after any failed write, and
-    then at most reset_interval seconds apart; zero sends it with every update, as before. Every
+    """An update is the colour block(s) alone: checked on hardware, the colour applies without the
+    reset, the loop command (8C 13) and the commit (8B 01 FF). The full sequence, reset first and
+    loop and commit last, is sent as a resync at the first update, after any failed write, and then
+    at most reset_interval seconds apart; zero sends it with every update, as before. Every
     transfer saved is one that cannot stall."""
 
     def __init__(self, transport: Transport, clock: Callable[[], float] = time.monotonic, reset_interval: float = 60.0):
@@ -78,9 +78,8 @@ class Keyboard:
         )
         steps = [("reset", _report(0x94))] if reset else []
         steps += [("colour", packet) for packet in build_color_packets(changed)]
-        if reset:
-            steps.append(("loop", _report(0x8C, 0x13)))  # the full sequence, as a resync
-        steps.append(("update", _report(0x8B, 0x01, 0xFF)))
+        if reset:  # the full sequence, as a resync
+            steps += [("loop", _report(0x8C, 0x13)), ("update", _report(0x8B, 0x01, 0xFF))]
         try:
             for step, report in steps:
                 self._transport.send(report)

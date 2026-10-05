@@ -57,7 +57,7 @@ The backlight level is global, so while `kbd-light` is in dim mode ESC and DEL a
 
 Blink caps and the render rate are `KEYLIGHTS_DEL_BLINK_CAP`, `KEYLIGHTS_ESC_BLINK_CAP` and
 `KEYLIGHTS_TICK_HZ`. `KEYLIGHTS_RESET_INTERVAL` (default 60) is how often the keyboard gets its full sequence (reset,
-colour, loop, commit) instead of the usual colour and commit: at the first update, after any
+colour, loop, commit) instead of the usual colour alone: at the first update, after any
 failed write, then at most this many seconds apart. Zero sends the full sequence with every
 update. Fewer transfers per update means fewer chances for the controller to stall. The keyboard accepts about 110 updates a second, so a cap above 55 blinks/s
 cannot be drawn.
