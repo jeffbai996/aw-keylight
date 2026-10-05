@@ -73,10 +73,13 @@ DEL, PGUP, PGDOWN and the arrow keys.
 
 ### `llama`: llama.cpp server or router
 
-Reads `/v1/models` and `/slots`. `#model` limits the key to one model of a router. Only models the
-router reports as loaded are queried, with `autoload=false`, because querying an unloaded model on
-a router loads it. A server with several slots is read slot by slot: any slot reading a prompt shows
-as reading, and the large-prompt flash is judged on the largest slot, never on the sum.
+Reads `/slots`, always with `autoload=false`, because querying an unloaded model on a router loads
+it. `#model` limits the key to one model of a router, and that model is read from its slots alone:
+the router answers 400 for an unloaded model, so the key needs no model listing, which waits on every
+upstream the router knows. Without `#model` the key reads `/v1/models` and queries each loaded model. A server with several slots is read slot by slot: any slot reading a prompt shows
+as reading, and the large-prompt flash is judged on the largest slot, never on the sum. A busy
+server can stop answering, so a silent server keeps showing its last activity for 5 seconds; after
+that the key shows it idle until it answers again.
 
 ### `ollama`: Ollama
 

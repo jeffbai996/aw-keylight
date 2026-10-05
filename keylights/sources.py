@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -143,6 +144,8 @@ def llama_state(get_json: GetJson, only_model: str | None = None) -> LlamaState:
     """Reads /slots for loaded models only: querying an unloaded one would autoload it.
 
     only_model limits the reading to one model of a router."""
+    if only_model is not None:
+        return _named_model_state(get_json, only_model)
     try:
         models = get_json("/v1/models")["data"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -164,15 +167,37 @@ def llama_state(get_json: GetJson, only_model: str | None = None) -> LlamaState:
         except (OSError, ValueError) as exc:
             answered = answered and not _is_timeout(exc)
             continue
-        for slot in slots:
-            # An idle slot keeps its last task's counters, so only a busy one is read.
-            if not slot.get("is_processing"):
-                continue
-            total, processed = slot.get("n_prompt_tokens"), slot.get("n_prompt_tokens_processed")
-            has_prompt = isinstance(total, int) and isinstance(processed, int)
-            new = max(0, total - int(slot.get("n_prompt_tokens_cache") or 0)) if has_prompt else None
-            rows.append((_slot_decoded(slot), new, processed if has_prompt else None))
+        rows += _busy_rows(slots)
     return _merge_slots(rows, answered, loaded)
+
+
+def _named_model_state(get_json: GetJson, model: str) -> LlamaState:
+    """One model, read from its slots alone. With autoload off a router answers 400 for an
+    unloaded model without loading it, so no model listing is needed, and the listing waits on
+    every upstream the router knows: one unreachable upstream delays it by seconds."""
+    try:
+        slots = get_json("/slots", {"model": model, "autoload": "false"})
+    except urllib.error.HTTPError:
+        return LlamaState(up=True, processing=False, decoded=0, loaded=False)
+    except (OSError, ValueError) as exc:
+        if _is_timeout(exc):
+            return LlamaState(up=True, processing=False, decoded=0, answered=False)
+        return LLAMA_DOWN
+    return _merge_slots(_busy_rows(slots), answered=True, loaded=True)
+
+
+def _busy_rows(slots: list[dict]) -> list[tuple[int, int | None, int | None]]:
+    """(decoded, prompt_new, prompt_done) for each busy slot. An idle slot keeps its last task's
+    counters, so only a busy one is read."""
+    rows = []
+    for slot in slots:
+        if not slot.get("is_processing"):
+            continue
+        total, processed = slot.get("n_prompt_tokens"), slot.get("n_prompt_tokens_processed")
+        has_prompt = isinstance(total, int) and isinstance(processed, int)
+        new = max(0, total - int(slot.get("n_prompt_tokens_cache") or 0)) if has_prompt else None
+        rows.append((_slot_decoded(slot), new, processed if has_prompt else None))
+    return rows
 
 
 def _merge_slots(rows: list[tuple[int, int | None, int | None]], answered: bool, loaded: bool) -> LlamaState:

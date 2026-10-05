@@ -12,6 +12,9 @@ PROMPT_ADVANCE_HOLD_S = 6.0
 # How long a silent Ollama host keeps its last reading. A stopped Ollama (gamemode) makes the gate
 # hang on a WSL host with mirrored networking instead of refusing, so silence has to end in "dark".
 OLLAMA_SILENCE_GRACE_S = 5.0
+# How long a silent llama.cpp server keeps showing its last activity. Past this nothing is
+# known about it, and replaying the last activity would show work that may have ended.
+LLAMA_SILENCE_GRACE_S = 5.0
 
 
 class LlamaTracker:
@@ -24,13 +27,21 @@ class LlamaTracker:
         self._prompt_mark = 0.0  # when the prompt counter last moved, or reading began
         self._advanced_at: float | None = None
         self._prompt_rate = 0.0
+        self._silent_since: float | None = None
 
     def update(self, state: LlamaState, now: float, dt: float) -> InferenceInput:
         last = self._last
-        if state.up and not state.answered and last is not None and last.state.up:
-            # A busy server stops answering /slots; its last reading is the best evidence.
+        silent = state.up and not state.answered
+        if not silent:
+            self._silent_since = None
+        elif self._silent_since is None:
+            self._silent_since = now
+        if silent and last is not None and last.state.up and now - self._silent_since < LLAMA_SILENCE_GRACE_S:
+            # A busy server stops answering /slots; for a moment its last reading is the best evidence.
             state, rate = last.state, last.token_rate
         else:
+            if silent and last is not None:
+                state = replace(state, loaded=last.state.loaded)
             rate = token_rate(self._prev_decoded, state.decoded, dt) if state.processing else 0.0
             self._prev_decoded = state.decoded
             self._track_prompt(state, now)

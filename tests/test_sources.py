@@ -1,3 +1,5 @@
+import urllib.error
+
 import pytest
 
 from keylights.sources import (
@@ -38,6 +40,9 @@ class FakeLlama:
         if path == "/v1/models":
             return {"data": [{"id": m, "status": {"value": s}} for m, s in self.models.items()]}
         if path == "/slots":
+            if self.models.get(params["model"]) != "loaded":
+                # What a router answers for an unloaded model when autoload is off.
+                raise urllib.error.HTTPError(path, 400, "model is not loaded", {}, None)
             return self.slots[params["model"]]
         raise AssertionError(path)
 
@@ -230,6 +235,43 @@ def test_llama_state_for_a_model_that_is_not_loaded_is_up_and_idle():
     state = llama_state(get, only_model="b")
     assert state.up and not state.processing
 
+
+
+class ListingTimesOut(FakeLlama):
+    """A router whose model listing hangs, as when one of its upstreams is unreachable."""
+
+    def __call__(self, path, params=None):
+        if path == "/v1/models":
+            self.calls.append((path, params))
+            raise TimeoutError("timed out")
+        return super().__call__(path, params)
+
+
+def test_a_named_model_is_read_from_its_slots_without_the_router_listing():
+    get = ListingTimesOut({"a": "loaded"}, {"a": [slot(True, 5)]})
+    state = llama_state(get, only_model="a")
+    assert state.up and state.answered and state.loaded and state.decoded == 5
+    assert [path for path, _ in get.calls] == ["/slots"]
+
+
+def test_a_named_model_that_is_not_loaded_is_up_and_parked():
+    state = llama_state(ListingTimesOut({"a": "unloaded"}, {}), only_model="a")
+    assert state.up and state.answered and not state.loaded and not state.processing
+
+
+def test_a_named_model_whose_slots_time_out_is_busy_not_down():
+    def get(path, params=None):
+        raise TimeoutError("timed out")
+
+    state = llama_state(get, only_model="a")
+    assert state.up and not state.answered
+
+
+def test_a_named_model_on_a_refusing_server_is_down():
+    def get(path, params=None):
+        raise ConnectionRefusedError("refused")
+
+    assert not llama_state(get, only_model="a").up
 
 PS_CHAT = {"name": "qwen3.8:27b-mtp-q4_K_M", "expires_at": "2026-10-04T23:17:05.218197081-07:00"}
 PS_EMBED = {"name": "bge-m3:batch4k", "expires_at": "2026-10-04T23:15:57.184440012-07:00"}

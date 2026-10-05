@@ -166,6 +166,18 @@ def test_unanswered_slots_poll_keeps_the_last_known_state():
     assert keyboard.frames[-1][15] == AMBER
 
 
+
+def test_a_server_silent_past_the_grace_stops_replaying_its_last_activity():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.llama_value = reading(0)
+    daemon.tick(now=0.0)
+    sources.llama_value = LlamaState(up=True, processing=False, decoded=0, answered=False)
+    daemon.tick(now=0.5)  # the silence starts here
+    daemon.tick(now=3.0)
+    assert keyboard.frames[-1][15] == AMBER  # still within the grace: assumed busy
+    daemon.tick(now=6.0)
+    assert keyboard.frames[-1][15] == BABY_BLUE  # silent too long: no activity is shown
+
 def test_unanswered_poll_before_any_reading_shows_the_server_idle():
     daemon, sources, keyboard, _ = make_daemon()
     sources.llama_value = LlamaState(up=True, processing=False, decoded=0, answered=False)
