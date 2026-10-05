@@ -37,7 +37,7 @@ class FakeLlama:
 
     def __call__(self, path, params=None):
         self.calls.append((path, params))
-        if path == "/v1/models":
+        if path == "/models":
             return {"data": [{"id": m, "status": {"value": s}} for m, s in self.models.items()]}
         if path == "/slots":
             if self.models.get(params["model"]) != "loaded":
@@ -118,7 +118,7 @@ def test_idle_slot_prompt_fields_are_ignored():
 
 def test_slots_timeout_on_loaded_model_is_up_but_unanswered():
     def get(path, params=None):
-        if path == "/v1/models":
+        if path == "/models":
             return {"data": [{"id": "m", "status": {"value": "loaded"}}]}
         raise TimeoutError("busy")
 
@@ -132,7 +132,7 @@ def test_slots_http_error_is_an_answer_not_a_busy_server():
     import urllib.error
 
     def get(path, params=None):
-        if path == "/v1/models":
+        if path == "/models":
             return {"data": [{"id": "m", "status": {"value": "loaded"}}]}
         raise urllib.error.HTTPError("http://x/slots", 501, "not implemented", {}, None)
 
@@ -144,7 +144,7 @@ def test_wrapped_socket_timeout_counts_as_busy():
     import urllib.error
 
     def get(path, params=None):
-        if path == "/v1/models":
+        if path == "/models":
             return {"data": [{"id": "m", "status": {"value": "loaded"}}]}
         raise urllib.error.URLError(TimeoutError("timed out"))
 
@@ -238,7 +238,8 @@ def test_llama_state_for_a_model_that_is_not_loaded_is_up_and_idle():
 
 
 class ListingTimesOut(FakeLlama):
-    """A router whose model listing hangs, as when one of its upstreams is unreachable."""
+    """A router whose merged listing (/v1/models) hangs, as when one of its upstreams is unreachable.
+    Its own models are still listed at once at /models."""
 
     def __call__(self, path, params=None):
         if path == "/v1/models":
@@ -253,6 +254,13 @@ def test_a_named_model_is_read_from_its_slots_without_the_router_listing():
     assert state.up and state.answered and state.loaded and state.decoded == 5
     assert [path for path, _ in get.calls] == ["/slots"]
 
+
+
+def test_every_model_is_read_without_waiting_on_the_routers_upstreams():
+    get = ListingTimesOut({"a": "loaded", "b": "unloaded", "c": "loaded"}, {"a": [slot(True, 5)], "c": [slot(True, 2)]})
+    state = llama_state(get)
+    assert state.answered and state.decoded == 7
+    assert "/v1/models" not in [path for path, _ in get.calls]
 
 def test_a_named_model_that_is_not_loaded_is_up_and_parked():
     state = llama_state(ListingTimesOut({"a": "unloaded"}, {}), only_model="a")

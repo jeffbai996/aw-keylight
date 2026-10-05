@@ -76,7 +76,8 @@ DEL, PGUP, PGDOWN and the arrow keys.
 Reads `/slots`, always with `autoload=false`, because querying an unloaded model on a router loads
 it. `#model` limits the key to one model of a router, and that model is read from its slots alone:
 the router answers 400 for an unloaded model, so the key needs no model listing, which waits on every
-upstream the router knows. Without `#model` the key reads `/v1/models` and queries each loaded model. A server with several slots is read slot by slot: any slot reading a prompt shows
+upstream the router knows. Without `#model` the key reads the router's own model list at `/models`, which answers at once, and
+queries each loaded model. A server with several slots is read slot by slot: any slot reading a prompt shows
 as reading, and the large-prompt flash is judged on the largest slot, never on the sum. A busy
 server can stop answering, so a silent server keeps showing its last activity for 5 seconds; after
 that the key shows it idle until it answers again.
@@ -176,7 +177,7 @@ lower the blink caps or the render rate, or use a wireless receiver on a differe
 (`ls -l /dev/hidraw*` and the udev rule above).
 
 **An inference key stays red.** The URL is unreachable from this machine. For llama.cpp, check
-`curl <url>/v1/models`; for Ollama, `curl <url>/api/ps`.
+`curl <url>/models`; for Ollama, `curl <url>/api/ps`.
 
 ## Notes
 

@@ -147,7 +147,9 @@ def llama_state(get_json: GetJson, only_model: str | None = None) -> LlamaState:
     if only_model is not None:
         return _named_model_state(get_json, only_model)
     try:
-        models = get_json("/v1/models")["data"]
+        # A router's own models are listed at /models at once. /v1/models also merges in the
+        # models of its upstreams, and waits on every one of them: an unreachable one costs seconds.
+        models = get_json("/models")["data"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         if _is_timeout(exc):
             return LlamaState(up=True, processing=False, decoded=0, answered=False)
