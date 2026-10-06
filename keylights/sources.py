@@ -282,7 +282,7 @@ def _gate_activity(get_json: GetJson) -> tuple[int | None, int | None, int | Non
 
 def gpu_state(get_json: GetJson, host: str) -> GpuState:
     try:
-        hosts = get_json("/api/telemetry")["hosts"]
+        hosts = get_json("/api/telemetry", {"hosts": host})["hosts"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         if _is_timeout(exc):
             return GpuState(up=True, power_w=None, limit_w=None, pstate=None, answered=False)

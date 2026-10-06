@@ -435,6 +435,13 @@ def test_gpu_state_reads_power_limit_and_pstate_of_the_named_host():
     assert state == GpuState(up=True, power_w=37.0, limit_w=350.0, pstate="P8")
 
 
+def test_gpu_state_asks_telemetry_for_its_host_alone():
+    # An unnamed read makes the server keep probing every machine it knows.
+    calls = []
+    gpu_state(lambda path, params=None: calls.append((path, params)) or {"hosts": []}, "host-a")
+    assert calls == [("/api/telemetry", {"hosts": "host-a"})]
+
+
 def test_gpu_state_takes_the_busiest_card_of_a_host():
     cards = [
         {"power_draw_w": 40.0, "power_limit_w": 350.0, "pstate": "P8"},
