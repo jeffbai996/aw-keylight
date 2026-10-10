@@ -1,5 +1,7 @@
 from keylights.config import load_config
-from keylights.daemon import Daemon
+import threading
+
+from keylights.daemon import Daemon, run
 from keylights.device import DeviceError
 from keylights.effects import AMBER, BABY_BLUE, GREEN, NET_LIT, RED
 from keylights.sources import GPU_DOWN, GpuState, LlamaState, OllamaState
@@ -509,3 +511,31 @@ def test_a_host_that_goes_silent_for_gamemode_ends_dark_and_for_anything_else_re
     daemon.tick(now=9.0)  # silent for 8 s: past the grace period
     frame = keyboard.frames[-1]
     assert frame[HOME] == RED and frame[END] == (0, 0, 0)
+
+
+def test_a_hung_host_does_not_hold_up_the_other_lights():
+    release = threading.Event()
+
+    class OneHostHangs(FakeSources):
+        def inference(self, name):
+            if name == "END":
+                release.wait(5)  # a host that accepts the connection and never answers
+            return super().inference(name)
+
+    config = load_config({
+        "KEYLIGHTS_LIGHTS": "END=llama:http://c.example,DEL=llama:http://d.example",
+        "KEYLIGHTS_POLL_INTERVAL": "0.01",
+        "KEYLIGHTS_TICK_HZ": "50",
+    })
+    sources, keyboard = OneHostHangs(), FakeKeyboard()
+    sources.light_values = {"DEL": reading(0)}
+    stop = threading.Event()
+    service = threading.Thread(target=run, args=(Daemon(sources, keyboard, FakePower(), config), config, stop))
+    service.start()
+    try:
+        stop.wait(0.5)
+        assert any(frame.get(15) == AMBER for frame in keyboard.frames)  # DEL shows its reading while END hangs
+    finally:
+        release.set()
+        stop.set()
+        service.join(timeout=5)

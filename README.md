@@ -106,7 +106,9 @@ An Ollama key can take a GPU overlay, `#gpu=<status url>@<host>`, and a `gpu` ke
     END=ollama:http://gpu-box:11434#gpu=https://status.example@gpu-box
     HOME=gpu:https://status.example#gpu-box
 
-Both read `GET <status url>/api/telemetry`, which must return:
+Both read `GET <status url>/api/telemetry?hosts=<host>[,<host>...]`. Lights on the same status server
+share one request naming all their hosts, so more hosts on one server cost no extra requests. The
+response must be:
 
     {"hosts": [{"host": "gpu-box", "ok": true, "sample_state": "healthy",
                 "sample_age_sec": 1.2, "gamemode": false,
@@ -169,8 +171,9 @@ not survive a power cycle.
 The power button is on a separate chip (`187c:0550`, AlienFX API v4) and is programmed with a
 one-step static colour. It is written only when its state changes, at most once every 2 seconds.
 
-Polling runs on its own thread. Rendering runs at `KEYLIGHTS_TICK_HZ` and never waits on the
-network.
+Each server is polled on its own thread, and this machine's readings (network, temperature, mute)
+on another, so a server that hangs holds up only its own key, which turns red once it has been
+silent for 5 seconds. Rendering runs at `KEYLIGHTS_TICK_HZ` and never waits on the network.
 
 ## Troubleshooting
 
