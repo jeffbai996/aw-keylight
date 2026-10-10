@@ -338,6 +338,34 @@ def parse_mic_muted(wpctl_output: str) -> bool:
     return "[MUTED]" in wpctl_output
 
 
+def cache_path(get: GetJson, path: str, ttl: float, clock: Callable[[], float] = time.monotonic) -> GetJson:
+    """`get` with one path's answer, or its failure, reused for `ttl` seconds; other paths pass through.
+
+    Ollama's /api/ps only says what is resident, which changes a few times a day, while the
+    fast poll runs twice a second for the gate's activity counters. Caching the failure too
+    keeps a stopped Ollama (gamemode) from being asked twice a second as well."""
+    held: dict[str, Any] = {}
+
+    def cached(p: str, params: dict | None = None) -> Any:
+        if p != path or params:
+            return get(p, params)
+        now = clock()
+        if "at" in held and now - held["at"] < ttl:
+            if "error" in held:
+                raise held["error"]
+            return held["value"]
+        held.clear()
+        held["at"] = now
+        try:
+            held["value"] = get(p)
+        except Exception as exc:
+            held["error"] = exc
+            raise
+        return held["value"]
+
+    return cached
+
+
 def make_http_get(base_url: str, timeout: float = 1.0) -> GetJson:
     def get(path: str, params: dict | None = None) -> Any:
         url = base_url.rstrip("/") + path
@@ -403,7 +431,7 @@ class Sources:
         return parse_mic_muted(result.stdout)
 
 
-def build_sources(lights, backlight_path: str | None) -> Sources:
+def build_sources(lights, backlight_path: str | None, ollama_ps_interval: float = 10.0) -> Sources:
     """One reader per configured light; llama.cpp, Ollama and GPU telemetry answer differently."""
     readers: dict[str, Callable[[], Any]] = {}
     for light in lights:
@@ -416,5 +444,6 @@ def build_sources(lights, backlight_path: str | None) -> Sources:
             if light.selector:  # gpu=<telemetry url>@<host>, checked when the config was read
                 url, _, host = light.selector.removeprefix("gpu=").rpartition("@")
                 overlay = functools.partial(gpu_state, make_http_get(url, 2.0), host)
-            readers[light.key] = functools.partial(ollama_state, make_http_get(light.url, 2.0), overlay)
+            get = cache_path(make_http_get(light.url, 2.0), "/api/ps", ollama_ps_interval)
+            readers[light.key] = functools.partial(ollama_state, get, overlay)
     return Sources(readers, backlight_path)

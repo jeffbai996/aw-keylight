@@ -129,6 +129,7 @@ usually sampled less often.
 | `KEYLIGHTS_DEL_BLINK_CAP` | `20` | Maximum blinks per second on inference keys. |
 | `KEYLIGHTS_ESC_BLINK_CAP` | `10` | Maximum dips per second on ESC. |
 | `KEYLIGHTS_POLL_INTERVAL` | `0.5` | Seconds between reads of servers and network counters. |
+| `KEYLIGHTS_OLLAMA_PS_INTERVAL` | `10` | Seconds an Ollama server's resident-model list is reused; its activity counters are still read every poll. |
 | `KEYLIGHTS_SLOW_POLL_INTERVAL` | `2` | Seconds between reads of temperature and mute state. |
 | `KEYLIGHTS_COMPACT_TOKENS` | `12288` | Uncached prompt size that counts as large. |
 | `KEYLIGHTS_COMPACT_BLINK` | `10` | Flash rate for a large prompt. |

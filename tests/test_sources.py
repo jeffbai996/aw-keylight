@@ -3,6 +3,7 @@ import urllib.error
 import pytest
 
 from keylights.sources import (
+    cache_path,
     GPU_DOWN,
     GpuState,
     LlamaState,
@@ -576,3 +577,42 @@ def test_the_gpu_overlay_is_kept_when_ollama_is_merely_silent():
 def test_nothing_resident_is_not_loaded():
     state = ollama_state(ps(), gpu=lambda: QUIET)
     assert state.up and not state.loaded and state.gpu == QUIET
+
+
+def test_cache_path_reuses_one_path_for_its_ttl():
+    calls = []
+    now = [0.0]
+
+    def get(path, params=None):
+        calls.append(path)
+        return {"path": path, "n": len(calls)}
+
+    cached = cache_path(get, "/api/ps", 10.0, clock=lambda: now[0])
+    assert cached("/api/ps")["n"] == 1
+    now[0] = 9.9
+    assert cached("/api/ps")["n"] == 1
+    assert cached("/_gate/activity")["path"] == "/_gate/activity"
+    assert cached("/_gate/activity")["path"] == "/_gate/activity"
+    now[0] = 10.0
+    assert cached("/api/ps")["n"] == 4
+    assert calls == ["/api/ps", "/_gate/activity", "/_gate/activity", "/api/ps"]
+
+
+def test_cache_path_holds_a_failure_too():
+    calls = []
+    now = [0.0]
+
+    def get(path, params=None):
+        calls.append(path)
+        raise urllib.error.URLError("refused")
+
+    cached = cache_path(get, "/api/ps", 10.0, clock=lambda: now[0])
+    for _ in range(3):
+        with pytest.raises(urllib.error.URLError):
+            cached("/api/ps")
+    assert calls == ["/api/ps"]
+    assert not ollama_state(cached).up
+    now[0] = 11.0
+    with pytest.raises(urllib.error.URLError):
+        cached("/api/ps")
+    assert calls == ["/api/ps", "/api/ps"]
