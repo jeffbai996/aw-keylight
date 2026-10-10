@@ -693,3 +693,35 @@ def test_http_get_refused_is_an_oserror_not_a_timeout():
     with pytest.raises(OSError) as err:
         get("/api/ps")
     assert not isinstance(err.value, TimeoutError)
+
+
+def test_lights_on_one_status_server_share_one_telemetry_fetch(monkeypatch):
+    import keylights.sources as sources_module
+    from keylights.config import parse_lights
+
+    calls = []
+
+    def fake_http_get(base_url, timeout=1.0):
+        def get(path, params=None):
+            calls.append((base_url, path, params))
+            if path == "/api/telemetry":
+                return {"hosts": [host_entry("host-a"), host_entry("host-b")]}
+            if path == "/api/ps":
+                return {"models": []}
+            raise OSError(path)
+        return get
+
+    monkeypatch.setattr(sources_module, "make_http_get", fake_http_get)
+    lights = parse_lights(
+        "HOME=ollama:http://a.example#gpu=http://s.example@host-a,"
+        "F12=ollama:http://b.example#gpu=http://s.example@host-b,"
+        "END=gpu:http://s.example#host-a"
+    )
+    sources = sources_module.build_sources(lights, None)
+    for key in ("HOME", "F12", "END"):
+        sources.inference(key)
+    # One request for the server, naming only the hosts the lights show: an unnamed read would
+    # make the server sample every machine it knows.
+    assert [c for c in calls if c[1] == "/api/telemetry"] == [
+        ("http://s.example", "/api/telemetry", {"hosts": "host-a,host-b"})
+    ]

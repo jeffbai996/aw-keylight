@@ -6,6 +6,7 @@ import http.client
 import json
 import re
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -346,22 +347,26 @@ def cache_path(get: GetJson, path: str, ttl: float, clock: Callable[[], float] =
     fast poll runs twice a second for the gate's activity counters. Caching the failure too
     keeps a stopped Ollama (gamemode) from being asked twice a second as well."""
     held: dict[str, Any] = {}
+    # Lights poll on their own threads, and several may share one cache: one fetch at a time,
+    # and the others take its answer.
+    lock = threading.Lock()
 
     def cached(p: str, params: dict | None = None) -> Any:
         if p != path or params:
             return get(p, params)
-        now = clock()
-        if "at" in held and now - held["at"] < ttl:
-            if "error" in held:
-                raise held["error"]
-            return held["value"]
-        held.clear()
-        held["at"] = now
-        try:
-            held["value"] = get(p)
-        except Exception as exc:
-            held["error"] = exc
-            raise
+        with lock:
+            now = clock()
+            if "at" in held and now - held["at"] < ttl:
+                if "error" in held:
+                    raise held["error"]
+                return held["value"]
+            held.clear()
+            held["at"] = now
+            try:
+                held["value"] = get(p)
+            except Exception as exc:
+                held["error"] = exc
+                raise
         return held["value"]
 
     return cached
@@ -469,19 +474,61 @@ class Sources:
         return parse_mic_muted(result.stdout)
 
 
-def build_sources(lights, backlight_path: str | None, ollama_ps_interval: float = 10.0) -> Sources:
-    """One reader per configured light; llama.cpp, Ollama and GPU telemetry answer differently."""
+def _telemetry_target(light) -> tuple[str | None, str | None]:
+    """The status server URL and host a light reads GPU telemetry for, if it reads any."""
+    if light.kind == "gpu":
+        return light.url, light.selector
+    if light.kind == "ollama" and light.selector:  # gpu=<telemetry url>@<host>
+        url, _, host = light.selector.removeprefix("gpu=").rpartition("@")
+        return url, host
+    return None, None
+
+
+def shared_telemetry(
+    get: GetJson, hosts: set[str], ttl: float, clock: Callable[[], float] = time.monotonic
+) -> GetJson:
+    """`get` for several lights on one status server. Each light asks /api/telemetry for its own
+    host; they share one request that names all of them, reused for `ttl` seconds. Naming the
+    hosts matters: an unnamed read makes the server keep live probes running on every machine."""
+    names = ",".join(sorted(hosts))
+    named = cache_path(lambda path, params=None: get(path, {"hosts": names}), "/api/telemetry", ttl, clock)
+
+    def read(path: str, params: dict | None = None) -> Any:
+        return named(path) if path == "/api/telemetry" else get(path, params)
+
+    return read
+
+
+def build_sources(
+    lights, backlight_path: str | None, ollama_ps_interval: float = 10.0, telemetry_interval: float = 0.4
+) -> Sources:
+    """One reader per configured light; llama.cpp, Ollama and GPU telemetry answer differently.
+
+    Lights on the same status server share one telemetry fetch that names all their hosts, held
+    for just under a poll interval: more hosts on one server cost no extra requests."""
     readers: dict[str, Callable[[], Any]] = {}
+    hosts_by_url: dict[str, set[str]] = {}
+    for light in lights:
+        url, host = _telemetry_target(light)
+        if url:
+            hosts_by_url.setdefault(url, set()).add(host)
+    status = {
+        url: shared_telemetry(make_http_get(url, 2.0), hosts, telemetry_interval) for url, hosts in hosts_by_url.items()
+    }
+
+    def telemetry(url: str) -> GetJson:
+        return status[url]
+
     for light in lights:
         if light.kind == "llama":
             readers[light.key] = functools.partial(llama_state, make_http_get(light.url, 1.0), light.selector)
         elif light.kind == "gpu":
-            readers[light.key] = functools.partial(gpu_state, make_http_get(light.url, 2.0), light.selector)
+            readers[light.key] = functools.partial(gpu_state, telemetry(light.url), light.selector)
         else:
             overlay = None
             if light.selector:  # gpu=<telemetry url>@<host>, checked when the config was read
                 url, _, host = light.selector.removeprefix("gpu=").rpartition("@")
-                overlay = functools.partial(gpu_state, make_http_get(url, 2.0), host)
+                overlay = functools.partial(gpu_state, telemetry(url), host)
             get = cache_path(make_http_get(light.url, 2.0), "/api/ps", ollama_ps_interval)
             readers[light.key] = functools.partial(ollama_state, get, overlay)
     return Sources(readers, backlight_path)
