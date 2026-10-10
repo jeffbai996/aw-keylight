@@ -1,0 +1,9 @@
+[Unit]
+Description=Follow the keyboard backlight state: keylights runs only while the backlight is on or dim
+
+[Path]
+PathChanged=%h/.local/state/kbd-light/state
+Unit=keylights-follow.service
+
+[Install]
+WantedBy=default.target

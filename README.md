@@ -140,6 +140,14 @@ usually sampled less often.
 
 A blink needs two frames, so a cap above half the render rate cannot be drawn.
 
+### Backlight off
+
+`systemd/keylights-follow.path` watches the `kbd-light` state file and stops keylights while it
+says `off`, starting it again on `on` or `dim`. Install it next to the main unit:
+
+    systemctl --user link ~/repos/keylights/systemd/keylights-follow.path ~/repos/keylights/systemd/keylights-follow.service
+    systemctl --user enable --now keylights-follow.path keylights-follow.service
+
 ## How it works
 
 The keyboard is driven with AlienFX v5 feature reports (report ID `0xCC`) through `HIDIOCSFEATURE`
