@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import functools
+import http.client
 import json
 import re
 import subprocess
@@ -367,12 +368,49 @@ def cache_path(get: GetJson, path: str, ttl: float, clock: Callable[[], float] =
 
 
 def make_http_get(base_url: str, timeout: float = 1.0) -> GetJson:
+    """A JSON GET against one server over one kept-alive connection.
+
+    urlopen opened a new connection per request; against an HTTPS server read twice a
+    second that was a TLS handshake each time, most of this daemon's CPU (2026-10-10:
+    22 ms of CPU per poll for one light). A dropped or stale connection is reopened once.
+    Failures look like urlopen's: HTTPError for an error status, OSError otherwise, and a
+    timeout stays a TimeoutError."""
+    parts = urllib.parse.urlsplit(base_url)
+    secure = parts.scheme == "https"
+    prefix = parts.path.rstrip("/")
+    conn: list[http.client.HTTPConnection | None] = [None]
+
+    def connect() -> http.client.HTTPConnection:
+        cls = http.client.HTTPSConnection if secure else http.client.HTTPConnection
+        return cls(parts.netloc, timeout=timeout)
+
     def get(path: str, params: dict | None = None) -> Any:
-        url = base_url.rstrip("/") + path
-        if params:
-            url += "?" + urllib.parse.urlencode(params)
-        with urllib.request.urlopen(url, timeout=timeout) as response:
-            return json.load(response)
+        target = prefix + path + ("?" + urllib.parse.urlencode(params) if params else "")
+        for attempt in (0, 1):
+            fresh = conn[0] is None
+            if fresh:
+                conn[0] = connect()
+            try:
+                conn[0].request("GET", target, headers={"Accept": "application/json"})
+                response = conn[0].getresponse()
+                body = response.read()
+            except TimeoutError:
+                conn[0].close()
+                conn[0] = None
+                raise
+            except (http.client.HTTPException, OSError) as exc:
+                conn[0].close()
+                conn[0] = None
+                if fresh or attempt:
+                    raise exc if isinstance(exc, OSError) else ConnectionError(str(exc)) from exc
+                continue  # the kept connection had gone stale: one retry on a new one
+            if response.will_close:
+                conn[0].close()
+                conn[0] = None
+            if response.status >= 400:
+                raise urllib.error.HTTPError(base_url + target, response.status, response.reason, response.headers, None)
+            return json.loads(body)
+        raise ConnectionError("unreachable")
 
     return get
 

@@ -3,6 +3,7 @@ import urllib.error
 import pytest
 
 from keylights.sources import (
+    make_http_get,
     cache_path,
     GPU_DOWN,
     GpuState,
@@ -616,3 +617,79 @@ def test_cache_path_holds_a_failure_too():
     with pytest.raises(urllib.error.URLError):
         cached("/api/ps")
     assert calls == ["/api/ps", "/api/ps"]
+
+
+class _CountingServer:
+    """A loopback HTTP/1.1 server that counts the connections it accepts."""
+
+    def __init__(self):
+        import http.server
+        import threading
+
+        counter = self
+        self.connections = 0
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def setup(self):
+                counter.connections += 1
+                super().setup()
+
+            def do_GET(self):
+                status = 404 if "/missing" in self.path else 200
+                body = b'{"path": "%s"}' % self.path.encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                if "/close" in self.path:
+                    self.close_connection = True  # the server ends the kept connection
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_http_get_keeps_one_connection():
+    srv = _CountingServer()
+    try:
+        get = make_http_get(srv.url + "/base", 2.0)
+        for _ in range(5):
+            assert get("/api/ps") == {"path": "/base/api/ps"}
+        assert get("/x", {"hosts": "a"}) == {"path": "/base/x?hosts=a"}
+        assert srv.connections == 1
+        with pytest.raises(urllib.error.HTTPError) as err:
+            get("/missing")
+        assert err.value.code == 404
+        assert get("/api/ps") == {"path": "/base/api/ps"}
+    finally:
+        srv.close()
+
+
+def test_http_get_reconnects_after_the_server_drops_it():
+    srv = _CountingServer()
+    try:
+        get = make_http_get(srv.url, 2.0)
+        assert get("/a") == {"path": "/a"}
+        assert get("/close") == {"path": "/close"}
+        assert get("/b") == {"path": "/b"}
+        assert get("/c") == {"path": "/c"}
+        assert srv.connections == 2
+    finally:
+        srv.close()
+
+
+def test_http_get_refused_is_an_oserror_not_a_timeout():
+    get = make_http_get("http://127.0.0.1:9", 1.0)
+    with pytest.raises(OSError) as err:
+        get("/api/ps")
+    assert not isinstance(err.value, TimeoutError)
