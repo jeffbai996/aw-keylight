@@ -27,7 +27,10 @@ def main() -> None:
 
     daemon = Daemon(
         build_sources(config.lights, config.backlight_state_path, config.ollama_ps_interval),
-        Keyboard(HidrawTransport(), reset_interval=config.reset_interval),
+        Keyboard(
+            HidrawTransport(), reset_interval=config.reset_interval,
+            backoff_s=config.stall_backoff, backoff_rate=config.stall_rate,
+        ),
         PowerButton(HidrawElcTransport(), config.power_zone),
         config,
     )

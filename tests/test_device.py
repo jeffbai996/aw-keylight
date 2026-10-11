@@ -220,3 +220,70 @@ def test_a_stall_in_a_light_update_names_the_colour_step():
     transport.fail_after = len(transport.sent)
     with pytest.raises(DeviceError, match="at colour"):
         keyboard.update({15: GREEN})
+
+
+class StallOnce(FakeTransport):
+    """Fails the next colour report it is given, as a stalled controller does, then recovers."""
+
+    def __init__(self):
+        super().__init__()
+        self.stall_next = False
+
+    def send(self, report):
+        if self.stall_next and report[1] == 0x8C and report[2] == 0x02:
+            self.stall_next = False
+            raise OSError("timed out")
+        super().send(report)
+
+
+def stalled_keyboard(now):
+    transport = StallOnce()
+    keyboard = Keyboard(transport, clock=lambda: now[0], reset_interval=60.0, backoff_s=60.0, backoff_rate=10.0)
+    keyboard.update({15: RED})
+    transport.stall_next = True
+    with pytest.raises(DeviceError):
+        keyboard.update({15: GREEN})
+    transport.sent.clear()
+    return keyboard, transport
+
+
+def test_after_a_stall_updates_are_spaced_out_for_a_while():
+    now = [0.0]
+    keyboard, transport = stalled_keyboard(now)
+    keyboard.update({15: GREEN})  # the retry goes out at once
+    now[0] = 0.05
+    keyboard.update({15: BLUE})  # too soon after the last write: held back
+    assert [p[5:8] for p in transport.color_packets()] == [bytes(GREEN)]
+    now[0] = 0.11
+    keyboard.update({15: BLUE})  # a tenth of a second on: goes out
+    assert [p[5:8] for p in transport.color_packets()] == [bytes(GREEN), bytes(BLUE)]
+
+
+def test_a_held_back_change_is_not_lost():
+    now = [0.0]
+    keyboard, transport = stalled_keyboard(now)
+    keyboard.update({15: GREEN, 1: RED})
+    now[0] = 0.05
+    keyboard.update({15: GREEN, 1: BLUE})  # held back
+    now[0] = 0.2
+    keyboard.update({15: GREEN, 1: BLUE})  # nothing new in this frame, but the held change is still owed
+    assert transport.color_packets()[-1][4:8] == bytes([2, *BLUE])
+
+
+def test_full_speed_returns_once_the_backoff_has_passed():
+    now = [0.0]
+    keyboard, transport = stalled_keyboard(now)
+    keyboard.update({15: GREEN})
+    now[0] = 61.0
+    keyboard.update({15: BLUE})
+    now[0] = 61.01
+    keyboard.update({15: RED})  # 10 ms apart, both sent: the backoff is over
+    assert len(transport.color_packets()) == 3
+
+
+def test_without_a_stall_nothing_is_held_back():
+    transport = FakeTransport()
+    keyboard = Keyboard(transport, clock=lambda: 0.0, backoff_s=60.0, backoff_rate=10.0)
+    for color in (RED, GREEN, BLUE):
+        keyboard.update({15: color})
+    assert len(transport.color_packets()) == 3

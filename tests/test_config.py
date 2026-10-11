@@ -109,3 +109,10 @@ def test_a_malformed_ollama_gpu_overlay_is_rejected(selector):
 def test_reset_interval_defaults_to_a_minute_and_zero_means_every_update():
     assert load_config({}).reset_interval == 60.0
     assert load_config({"KEYLIGHTS_RESET_INTERVAL": "0"}).reset_interval == 0.0
+
+
+def test_stall_backoff_defaults_to_a_minute_at_ten_updates_a_second():
+    config = load_config({})
+    assert (config.stall_backoff, config.stall_rate) == (60.0, 10.0)
+    config = load_config({"KEYLIGHTS_STALL_BACKOFF": "0", "KEYLIGHTS_STALL_RATE": "5"})
+    assert (config.stall_backoff, config.stall_rate) == (0.0, 5.0)

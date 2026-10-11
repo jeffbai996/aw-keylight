@@ -136,6 +136,8 @@ usually sampled less often.
 | `KEYLIGHTS_COMPACT_TOKENS` | `12288` | Uncached prompt size that counts as large. |
 | `KEYLIGHTS_COMPACT_BLINK` | `10` | Flash rate for a large prompt. |
 | `KEYLIGHTS_RESET_INTERVAL` | `60` | Seconds between full keyboard resyncs. `0` sends the full sequence with every update. |
+| `KEYLIGHTS_STALL_BACKOFF` | `60` | Seconds of reduced update rate after a keyboard write stalls. `0` turns it off. |
+| `KEYLIGHTS_STALL_RATE` | `10` | Maximum keyboard updates per second during that time. |
 | `KEYLIGHTS_POWER_ZONE` | `1` | AlienFX zone of the power button. |
 | `KEYLIGHTS_BACKLIGHT_STATE` | `~/.local/state/kbd-light/state` | Optional file holding `on`, `dim` or `off`. |
 | `KEYLIGHTS_DIM_BOOST` | `1.6` | Brightness multiplier for ESC and inference keys while that file says `dim`. |
@@ -182,8 +184,10 @@ transfers, and the kernel's control timeout of 5 seconds cannot be shortened fro
 journal shows `Keyboard write failed at <step> after 5.xs`. The same controller handles keystrokes,
 and lighting can only be written over control transfers. Stalls become more frequent with more write
 traffic and with other traffic on the same USB controller. On the m15 R2 the internal Bluetooth
-radio shares it, and stalls rose sharply while a Bluetooth mouse was connected. To reduce them,
-lower the blink caps or the render rate, or use a wireless receiver on a different USB controller.
+radio shares it, and stalls rose sharply while a Bluetooth mouse was connected. Stalls come in clusters, so after one the daemon
+sends at most `KEYLIGHTS_STALL_RATE` updates a second for `KEYLIGHTS_STALL_BACKOFF` seconds. To
+reduce them further, lower the blink caps or the render rate, or use a wireless receiver on a
+different USB controller.
 
 **A key never lights.** Check the key name, and that the user can open the hidraw node
 (`ls -l /dev/hidraw*` and the udev rule above).

@@ -59,10 +59,25 @@ class Keyboard:
     at most reset_interval seconds apart; zero sends it with every update, as before. Every
     transfer saved is one that cannot stall."""
 
-    def __init__(self, transport: Transport, clock: Callable[[], float] = time.monotonic, reset_interval: float = 60.0):
+    def __init__(
+        self,
+        transport: Transport,
+        clock: Callable[[], float] = time.monotonic,
+        reset_interval: float = 60.0,
+        backoff_s: float = 60.0,
+        backoff_rate: float = 10.0,
+    ):
         self._transport = transport
         self._clock = clock
         self._reset_interval = reset_interval
+        # Stalls come in clusters, while other traffic on the same USB controller (a Bluetooth
+        # radio waking up, say) is heavy. After one, updates go out at most backoff_rate a second
+        # for backoff_s seconds; frames in between are skipped, and their changes go out with the
+        # next update. This lowers the chance of the next stall; it cannot stop the other traffic.
+        self._backoff_s = backoff_s
+        self._backoff_gap = 1.0 / backoff_rate if backoff_rate > 0 else 0.0
+        self._backoff_until: float | None = None
+        self._last_write: float | None = None
         self._last_reset: float | None = None  # None: the controller's state is not known
         self._last: dict[int, Color] = {}
 
@@ -71,6 +86,9 @@ class Keyboard:
         if not changed:
             return
         started = self._clock()
+        backing_off = self._backoff_until is not None and started < self._backoff_until
+        if backing_off and self._last_write is not None and started - self._last_write < self._backoff_gap:
+            return
         reset = (
             self._last_reset is None
             or self._reset_interval <= 0
@@ -84,10 +102,14 @@ class Keyboard:
             for step, report in steps:
                 self._transport.send(report)
         except OSError as exc:
+            failed_at = self._clock()
             self._last_reset = None  # the controller may be mid-sequence: start the next one clean
+            self._backoff_until = failed_at + self._backoff_s
+            self._last_write = None  # the retry, a full resync, goes out at once; the spacing starts after it
             # A control transfer that gets no answer blocks for seconds. Which step it was, and for
             # how long, is what tells a stalled controller from a slow one.
-            raise DeviceError(f"Keyboard write failed at {step} after {self._clock() - started:.1f}s: {exc}") from exc
+            raise DeviceError(f"Keyboard write failed at {step} after {failed_at - started:.1f}s: {exc}") from exc
+        self._last_write = started
         if reset:
             self._last_reset = started
         # Recorded only after a full write, so a failed update is retried in full.

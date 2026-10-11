@@ -44,6 +44,8 @@ class Config:
     compact_blink: float
     reset_interval: float
     ollama_ps_interval: float = 10.0
+    stall_backoff: float = 60.0
+    stall_rate: float = 10.0
 
 
 DEFAULT_BACKLIGHT_STATE = "~/.local/state/kbd-light/state"
@@ -112,5 +114,7 @@ def load_config(env: Mapping[str, str]) -> Config:
         compact_tokens=int(env.get("KEYLIGHTS_COMPACT_TOKENS", "12288")),
         compact_blink=float(env.get("KEYLIGHTS_COMPACT_BLINK", "10")),
         reset_interval=float(env.get("KEYLIGHTS_RESET_INTERVAL", "60")),
+        stall_backoff=float(env.get("KEYLIGHTS_STALL_BACKOFF", "60")),
+        stall_rate=float(env.get("KEYLIGHTS_STALL_RATE", "10")),
         ollama_ps_interval=float(env.get("KEYLIGHTS_OLLAMA_PS_INTERVAL", "10")),
     )
