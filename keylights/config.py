@@ -12,7 +12,7 @@ Color = tuple[int, int, int]
 
 LIGHT_KINDS = ("llama", "ollama", "gpu")
 # Keys the status lights already drive; a light cannot claim them.
-RESERVED_KEYS = frozenset({"ESC", "F1", "F2", "F3", "F4", "F5"})
+RESERVED_KEYS = frozenset({"ESC", *(f"F{n}" for n in range(1, 11))})
 
 
 @dataclass(frozen=True)

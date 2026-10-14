@@ -19,6 +19,8 @@ class FakeSources:
         self.llama_value = UP_IDLE
         self.net_value = 0
         self.temp_value = 45.0
+        self.gpu_temp_value = 50.0
+        self.local_busy_value = False
         self.mic_value = False
         self.backlight_value = None
         self.online_value = True
@@ -48,6 +50,12 @@ class FakeSources:
 
     def mic_muted(self):
         return self._get(self.mic_value)
+
+    def gpu_temp(self):
+        return self._get(self.gpu_temp_value)
+
+    def local_busy(self):
+        return self._get(self.local_busy_value)
 
 
 class FakeKeyboard:
@@ -90,7 +98,7 @@ def test_loop_survives_one_source_failing():
     daemon.tick(now=0.0)
 
     (frame,) = keyboard.frames
-    assert frame[1] == BASE  # F1 falls back to the base color
+    assert frame[2] == BASE  # the CPU bar falls back to the base colour
     assert frame[15] != BASE  # DEL still reflects the inference server
 
 
@@ -121,7 +129,7 @@ def test_shutdown_restores_previous_keyboard_lighting():
 
     daemon.shutdown()
 
-    assert keyboard.frames[-1] == {k: BASE for k in (0, 1, 2, 3, 4, 5, 15)}
+    assert keyboard.frames[-1] == {k: BASE for k in (0, *range(1, 11), 15)}
     assert power.restored is True
 
 
@@ -198,7 +206,7 @@ def test_esc_and_del_are_boosted_only_while_the_backlight_is_dim():
     daemon.tick(now=0.1)
     dim_esc = keyboard.frames[-1][0]
     assert dim_esc == tuple(min(255, round(c * 1.6)) for c in NET_LIT)
-    assert keyboard.frames[-1][1] == keyboard.frames[0][1]  # F1 is not boosted
+    assert keyboard.frames[-1][2] == keyboard.frames[0][2]  # the temperature bars are not boosted
 
 
 def test_unreadable_backlight_state_applies_no_boost():
@@ -287,7 +295,7 @@ def test_shutdown_restores_the_status_keys_and_every_configured_light():
     daemon, _, keyboard, power = make_daemon(LIGHTS_ENV)
     daemon.tick(now=0.0)
     daemon.shutdown()
-    assert keyboard.frames[-1] == {k: BASE for k in (0, 1, 2, 3, 4, 5, F12, HOME, END, DEL)}
+    assert keyboard.frames[-1] == {k: BASE for k in (0, *range(1, 11), F12, HOME, END, DEL)}
     assert power.restored
 
 
@@ -539,3 +547,22 @@ def test_a_hung_host_does_not_hold_up_the_other_lights():
         release.set()
         stop.set()
         service.join(timeout=5)
+
+
+def test_f1_and_the_gpu_bar_come_from_this_machines_gpu():
+    from keylights.effects import OFF, temp_color
+
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.local_busy_value = True
+    sources.gpu_temp_value = 78.0
+    daemon.tick(now=0.05)
+    frame = keyboard.frames[-1]
+    assert frame[1] == GREEN  # F1, on-phase of the busy blink
+    assert [frame[k] for k in (6, 7, 8, 9)] == [temp_color(78.0)] * 3 + [OFF]
+
+
+def test_an_unreadable_gpu_turns_f1_red_without_stopping_the_rest():
+    daemon, sources, keyboard, _ = make_daemon()
+    sources.local_busy_value = RuntimeError("nvidia-smi gone")
+    daemon.tick(now=0.0)
+    assert keyboard.frames[-1][1] == RED

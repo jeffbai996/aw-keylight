@@ -29,8 +29,14 @@ MIN_PROMPT_BLINK = 2.0  # slow prompt progress still has to read as blinking, no
 BYTES_PER_BLINK = 10_000.0
 TEMP_LOW_C, TEMP_HIGH_C = 45.0, 90.0
 
-TEMP_KEYS = tuple(key_id(f"F{n}") for n in range(1, 5))
-STATUS_KEYS = (key_id("ESC"), *TEMP_KEYS, key_id("F5"))
+LOCAL_KEY = key_id("F1")  # inference on this machine's own GPU
+CPU_BAR = tuple(key_id(f"F{n}") for n in range(2, 6))
+GPU_BAR = tuple(key_id(f"F{n}") for n in range(6, 10))
+MUTE_KEY = key_id("F10")
+STATUS_KEYS = (key_id("ESC"), LOCAL_KEY, *CPU_BAR, *GPU_BAR, MUTE_KEY)
+# A temperature bar lights one key below the first step and one more key at each step.
+TEMP_BAR_STEPS_C = (65.0, 75.0, 85.0)
+LOCAL_BUSY_BLINK = 4.0  # blinks a second while this machine's GPU works: the fixed reading speed
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,8 @@ class Inputs:
     muted: bool
     lights: Mapping[int, Light] = field(default_factory=dict)  # key id -> what that key shows
     online: bool = True  # False when there is no internet: ESC goes dark
+    gpu_temp_c: float | None = None
+    local_busy: bool | None = False  # this machine's GPU working; None when it cannot be read
 
 
 def managed_keys(light_keys) -> tuple[int, ...]:
@@ -136,6 +144,26 @@ def esc_color(rate: float, t: float, online: bool = True) -> Color:
     if not online:
         return OFF
     return NET_DIP if rate > 0 and not blink_on(rate, t) else NET_LIT
+
+
+def temp_bar(temp_c: float | None, keys: tuple[int, ...] | list[int], base: Color) -> dict[int, Color]:
+    """A bar over `keys`: one key lit when cool, one more at each step, every lit key in the
+    colour of the current temperature and the rest dark. A missing sensor leaves the bar at base."""
+    if temp_c is None:
+        return {key: base for key in keys}
+    lit = 1 + sum(temp_c >= step for step in TEMP_BAR_STEPS_C)
+    color = temp_color(temp_c)
+    return {key: color if i < lit else OFF for i, key in enumerate(keys)}
+
+
+def local_color(busy: bool | None, t: float) -> Color:
+    """F1: green blinking at the reading speed while this machine's GPU works, baby blue when it
+    idles, red when it cannot be read. There is no token count to follow, so the rate is fixed."""
+    if busy is None:
+        return RED
+    if busy:
+        return GREEN if blink_on(LOCAL_BUSY_BLINK, t) else OFF
+    return BABY_BLUE
 
 
 def mute_color(muted: bool, base: Color) -> Color:
@@ -238,7 +266,8 @@ def build_frame(
     esc_key = esc_color(net_blink_rate(inputs.net_bytes_per_s, esc_cap), t, inputs.online)
     frame = {
         key_id("ESC"): boost_color(esc_key, boost),
-        key_id("F5"): mute_color(inputs.muted, base),
+        LOCAL_KEY: boost_color(local_color(inputs.local_busy, t), boost),
+        MUTE_KEY: mute_color(inputs.muted, base),
     }
     for key, light in inputs.lights.items():
         if isinstance(light, InferenceInput):
@@ -248,6 +277,6 @@ def build_frame(
         else:
             color = ollama_color(light.state, t, light.event_rate, del_cap)
         frame[key] = boost_color(color, boost)
-    temp = base if inputs.temp_c is None else temp_color(inputs.temp_c)
-    frame.update({key: temp for key in TEMP_KEYS})
+    frame.update(temp_bar(inputs.temp_c, CPU_BAR, base))
+    frame.update(temp_bar(inputs.gpu_temp_c, GPU_BAR, base))
     return frame

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from keylights.config import LightSpec, load_config
+from keylights.config import LightSpec, load_config, parse_lights
 
 
 def test_endpoints_come_from_env_and_no_default_url_is_hardcoded():
@@ -116,3 +116,9 @@ def test_stall_backoff_defaults_to_a_minute_at_ten_updates_a_second():
     assert (config.stall_backoff, config.stall_rate) == (60.0, 10.0)
     config = load_config({"KEYLIGHTS_STALL_BACKOFF": "0", "KEYLIGHTS_STALL_RATE": "5"})
     assert (config.stall_backoff, config.stall_rate) == (0.0, 5.0)
+
+
+@pytest.mark.parametrize("key", ["F1", "F6", "F9", "F10"])
+def test_the_status_keys_up_to_f10_cannot_be_claimed_by_a_light(key):
+    with pytest.raises(ValueError, match="status light"):
+        parse_lights(f"{key}=llama:http://x.example")

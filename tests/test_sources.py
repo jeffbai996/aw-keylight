@@ -10,6 +10,9 @@ from keylights.sources import (
     LlamaState,
     OllamaState,
     cpu_temp_c,
+    gpu_temp_c,
+    GpuActivity,
+    parse_gpu_utilization,
     gpu_state,
     llama_state,
     net_rate,
@@ -725,3 +728,50 @@ def test_lights_on_one_status_server_share_one_telemetry_fetch(monkeypatch):
     assert [c for c in calls if c[1] == "/api/telemetry"] == [
         ("http://s.example", "/api/telemetry", {"hosts": "host-a,host-b"})
     ]
+
+
+def labelled_hwmon(root, index, name, labelled_temps):
+    directory = root / f"hwmon{index}"
+    directory.mkdir()
+    (directory / "name").write_text(name + "\n")
+    for n, (label, value) in enumerate(labelled_temps, start=1):
+        (directory / f"temp{n}_label").write_text(label + "\n")
+        (directory / f"temp{n}_input").write_text(f"{value}\n")
+
+
+def test_gpu_temp_is_read_from_the_sensor_labelled_gpu(tmp_path):
+    labelled_hwmon(tmp_path, 0, "coretemp", [("Package id 0", 80000)])
+    labelled_hwmon(tmp_path, 1, "alienware_wmi", [("CPU", 75000), ("GPU", 55000)])
+    assert gpu_temp_c(tmp_path) == 55.0
+
+
+def test_gpu_temp_is_none_without_a_gpu_sensor(tmp_path):
+    labelled_hwmon(tmp_path, 0, "alienware_wmi", [("CPU", 75000)])
+    assert gpu_temp_c(tmp_path) is None
+
+
+def test_gpu_utilization_lines_say_whether_the_gpu_is_working():
+    assert parse_gpu_utilization("0\n") is False
+    assert parse_gpu_utilization(" 37\n") is True
+    assert parse_gpu_utilization("[N/A]\n") is None
+
+
+def test_gpu_activity_reports_the_latest_line_of_its_stream():
+    import time
+
+    activity = GpuActivity(["sh", "-c", "echo 0; sleep 0.2; echo 41; sleep 5"])
+    try:
+        deadline = time.monotonic() + 3
+        while activity.busy() is not True and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert activity.busy() is True
+    finally:
+        activity.close()
+
+
+def test_gpu_activity_is_unknown_when_the_stream_cannot_start():
+    activity = GpuActivity(["/nonexistent/nvidia-smi"])
+    try:
+        assert activity.busy() is None
+    finally:
+        activity.close()

@@ -336,6 +336,87 @@ def cpu_temp_c(hwmon_root: Path = Path("/sys/class/hwmon")) -> float | None:
     return hottest
 
 
+def gpu_temp_c(hwmon_root: Path = Path("/sys/class/hwmon")) -> float | None:
+    """The temperature labelled GPU, such as the Alienware WMI sensor's. Read from the platform
+    sensor rather than the GPU driver, so it never wakes a GPU that has powered down."""
+    for sensor in sorted(hwmon_root.glob("hwmon*")):
+        for label in sorted(sensor.glob("temp*_label")):
+            try:
+                if label.read_text().strip().upper() != "GPU":
+                    continue
+                return int((sensor / label.name.replace("_label", "_input")).read_text()) / 1000
+            except (OSError, ValueError):
+                continue
+    return None
+
+
+def parse_gpu_utilization(line: str) -> bool | None:
+    """One line of `nvidia-smi --query-gpu=utilization.gpu`: whether the GPU did any work in the
+    last sample. None when the driver reports no number."""
+    try:
+        return int(line.strip()) > 0
+    except ValueError:
+        return None
+
+
+NVIDIA_UTILIZATION = [
+    "nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits", "-lms", "500",
+]
+
+
+class GpuActivity:
+    """Whether this machine's GPU is working, from one long-running nvidia-smi that prints its
+    utilization every 500 ms, so no process is started per poll. A stream that stops, or never
+    started, reads as unknown, and is restarted at most every RESTART_S seconds."""
+
+    STALE_S = 3.0
+    RESTART_S = 30.0
+
+    def __init__(self, command: list[str] | None = None):
+        self._command = command or NVIDIA_UTILIZATION
+        self._lock = threading.Lock()
+        self._busy: bool | None = None
+        self._seen = float("-inf")
+        self._started = float("-inf")
+        self._process: subprocess.Popen | None = None
+        self._start()
+
+    def busy(self) -> bool | None:
+        now = time.monotonic()
+        with self._lock:
+            if now - self._seen <= self.STALE_S:
+                return self._busy
+        running = self._process is not None and self._process.poll() is None
+        if running and now - self._started <= self.STALE_S:
+            return False  # just started, first sample not in yet: idle, not an outage
+        if (self._process is None or self._process.poll() is not None) and (
+            time.monotonic() - self._started >= self.RESTART_S
+        ):
+            self._start()
+        return None
+
+    def close(self) -> None:
+        if self._process is not None and self._process.poll() is None:
+            self._process.terminate()
+
+    def _start(self) -> None:
+        self._started = time.monotonic()
+        try:
+            self._process = subprocess.Popen(
+                self._command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            )
+        except OSError:
+            self._process = None
+            return
+        threading.Thread(target=self._read, args=(self._process,), name="keylights-gpu", daemon=True).start()
+
+    def _read(self, process: subprocess.Popen) -> None:
+        for line in process.stdout:
+            value = parse_gpu_utilization(line)
+            with self._lock:
+                self._busy, self._seen = value, time.monotonic()
+
+
 def parse_mic_muted(wpctl_output: str) -> bool:
     return "[MUTED]" in wpctl_output
 
@@ -428,6 +509,7 @@ class Sources:
         self._backlight_path = backlight_path
         self._last_probe = float("-inf")
         self._probe: subprocess.Popen | None = None
+        self._gpu_activity: GpuActivity | None = None
 
     def backlight_state(self) -> str | None:
         return read_backlight_state(self._backlight_path) if self._backlight_path else None
@@ -465,6 +547,15 @@ class Sources:
 
     def cpu_temp(self) -> float | None:
         return cpu_temp_c()
+
+    def gpu_temp(self) -> float | None:
+        return gpu_temp_c()
+
+    def local_busy(self) -> bool | None:
+        """Whether this machine's GPU is running inference. The stream starts on first use."""
+        if self._gpu_activity is None:
+            self._gpu_activity = GpuActivity()
+        return self._gpu_activity.busy()
 
     def mic_muted(self) -> bool:
         result = subprocess.run(

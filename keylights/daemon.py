@@ -112,16 +112,20 @@ class Daemon:
                 net = net_rate(self._prev_net[0], self._prev_net[1], cur_bytes, now)
             self._prev_net = (cur_bytes, now)
         backlight = self._safe(self._sources.backlight_state, None, "backlight state")
+        local_busy = self._safe(self._sources.local_busy, None, "local GPU activity")
         with self._lock:
             self._backlight = backlight
-            self._inputs = dataclasses.replace(self._inputs, net_bytes_per_s=net)
+            self._inputs = dataclasses.replace(self._inputs, net_bytes_per_s=net, local_busy=local_busy)
 
     def _poll_slow(self) -> None:
         temp = self._safe(self._sources.cpu_temp, None, "cpu temperature")
+        gpu_temp = self._safe(self._sources.gpu_temp, None, "gpu temperature")
         muted = self._safe(self._sources.mic_muted, False, "mic state")
         online = self._safe(self._sources.online, True, "connectivity")
         with self._lock:
-            self._inputs = dataclasses.replace(self._inputs, temp_c=temp, muted=muted, online=online)
+            self._inputs = dataclasses.replace(
+                self._inputs, temp_c=temp, gpu_temp_c=gpu_temp, muted=muted, online=online
+            )
 
     @staticmethod
     def _safe(read, fallback, label: str):

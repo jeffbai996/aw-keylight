@@ -25,6 +25,8 @@ from keylights.effects import (
     net_blink_rate,
     prompt_blink_rate,
     temp_color,
+    local_color,
+    temp_bar,
 )
 from keylights.keymap import key_id
 from keylights.sources import GPU_DOWN, GpuState, LlamaState, OllamaState
@@ -123,7 +125,9 @@ def test_dim_boost_scales_only_esc_and_del_and_caps_at_full_channel():
     boosted = build_frame(inputs(temp_c=45.0), 0.0, BASE, boost=1.6)
     assert boosted[0] == tuple(min(255, round(c * 1.6)) for c in plain[0])
     assert boosted[15] == boost_color(BABY_BLUE, 1.6)  # the idle colour is lifted like the rest
-    assert {k: boosted[k] for k in (1, 2, 3, 4, 5)} == {k: plain[k] for k in (1, 2, 3, 4, 5)}
+    bars = range(2, 11)  # temperature bars and mute keep their colours
+    assert {k: boosted[k] for k in bars} == {k: plain[k] for k in bars}
+    assert boosted[1] == boost_color(plain[1], 1.6)  # F1 is an inference light, lifted like the others
 
 
 def test_no_boost_leaves_frame_unchanged():
@@ -136,7 +140,7 @@ def test_frame_blinks_del_amber_from_prompt_rate_when_advancing():
     assert colors == {AMBER, OFF}
 
 
-def test_f5_red_only_when_muted():
+def test_mute_key_is_red_only_when_muted():
     assert mute_color(True, BASE) == RED
     assert mute_color(False, BASE) == BASE
 
@@ -150,19 +154,48 @@ def inputs(**overrides):
     return Inputs(**values)
 
 
-def test_f1_to_f4_share_the_temperature_color():
-    frame = build_frame(inputs(temp_c=90.0), 0.0, BASE)
-    assert {frame[k] for k in (1, 2, 3, 4)} == {(255, 0, 0)}
+CPU_BAR = [key_id(f"F{n}") for n in range(2, 6)]
+GPU_BAR = [key_id(f"F{n}") for n in range(6, 10)]
 
 
-def test_temperature_keys_fall_back_to_base_when_sensor_missing():
-    frame = build_frame(inputs(temp_c=None), 0.0, BASE)
-    assert {frame[k] for k in (1, 2, 3, 4)} == {BASE}
+def test_a_cool_reading_lights_only_the_first_key_of_a_bar():
+    assert temp_bar(50.0, CPU_BAR, BASE) == {CPU_BAR[0]: temp_color(50.0), **{k: OFF for k in CPU_BAR[1:]}}
+
+
+def test_each_step_lights_one_more_key_and_every_lit_key_takes_the_current_colour():
+    for temp, lit in ((64.9, 1), (65.0, 2), (75.0, 3), (85.0, 4), (99.0, 4)):
+        bar = temp_bar(temp, CPU_BAR, BASE)
+        assert [bar[k] for k in CPU_BAR] == [temp_color(temp)] * lit + [OFF] * (4 - lit), temp
+
+
+def test_a_missing_sensor_leaves_its_bar_at_the_base_colour():
+    assert set(temp_bar(None, GPU_BAR, BASE).values()) == {BASE}
+
+
+def test_frame_draws_the_cpu_bar_on_f2_to_f5_and_the_gpu_bar_on_f6_to_f9():
+    frame = build_frame(inputs(temp_c=80.0, gpu_temp_c=50.0), 0.0, BASE)
+    assert [frame[k] for k in CPU_BAR] == [temp_color(80.0)] * 3 + [OFF]
+    assert [frame[k] for k in GPU_BAR] == [temp_color(50.0)] + [OFF] * 3
+
+
+def test_mute_moves_to_f10():
+    assert build_frame(inputs(muted=True), 0.0, BASE)[key_id("F10")] == RED
+    assert build_frame(inputs(muted=False), 0.0, BASE)[key_id("F10")] == BASE
+
+
+def test_f1_blinks_green_at_the_reading_speed_while_this_machine_runs_inference():
+    assert {local_color(True, t / 100) for t in range(50)} == {GREEN, OFF}
+    assert local_color(True, 0.05) == GREEN and local_color(True, 0.15) == OFF  # 4 blinks a second
+
+
+def test_f1_is_blue_when_idle_and_red_when_the_gpu_cannot_be_read():
+    assert local_color(False, 0.15) == BABY_BLUE
+    assert local_color(None, 0.15) == RED
 
 
 def test_frame_covers_exactly_the_managed_keys():
     frame = build_frame(inputs(), 0.0, BASE)
-    assert set(frame) == {0, 1, 2, 3, 4, 5, 15}
+    assert set(frame) == {0, *range(1, 11), 15}
 
 
 def test_compaction_needs_a_busy_slot_with_enough_prompt_tokens_processed():
@@ -271,11 +304,11 @@ def test_dim_boost_also_lifts_the_light_keys():
 
 def test_frame_has_only_the_status_keys_when_no_lights_are_configured():
     frame = build_frame(inputs(lights={}), 0.0, BASE)
-    assert set(frame) == {0, 1, 2, 3, 4, 5}
+    assert set(frame) == {0, *range(1, 11)}
 
 
 def test_frame_adds_exactly_the_configured_light_keys():
-    assert set(lights_frame(0.0)) == {0, 1, 2, 3, 4, 5, 12, 13, 14, 15}
+    assert set(lights_frame(0.0)) == {0, *range(1, 11), 12, 13, 14, 15}
 
 
 def test_power_state_reads_prompt_when_any_inference_light_is_reading():

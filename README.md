@@ -14,8 +14,10 @@ controller may work; nothing else is tested.
 | Key | Shows |
 |---|---|
 | ESC | Network. Lit blue while the internet is up, dipping to dim blue with traffic. Dark when NetworkManager reports no internet, limited connectivity or a captive portal. |
-| F1–F4 | CPU temperature, green at 45 °C through yellow to red at 90 °C. |
-| F5 | Red while the default microphone is muted. |
+| F1 | Inference on this machine's own GPU (speech-to-text, embeddings, anything): green blinking at 4 a second while the GPU works, blue when it idles, red when it cannot be read. |
+| F2–F5 | CPU temperature as a bar: one key lit below 65 °C, two from 65, three from 75, four from 85. Every lit key takes the temperature colour, green at 45 °C through yellow to red at 90 °C; unlit keys are dark. |
+| F6–F9 | GPU temperature, as the same bar. |
+| F10 | Red while the default microphone is muted. |
 | Inference keys | One key per server, set in `KEYLIGHTS_LIGHTS` (for example DEL, END, HOME). |
 | Power button | A steady summary: green when any inference server is up, amber while any llama.cpp server reads a prompt, off when none is up. |
 
@@ -38,6 +40,8 @@ Keys that are not configured keep the keyboard's own colours. On exit the manage
 - Linux with hidraw, and Python 3.10 or later.
 - Write access to the keyboard's hidraw node, and to the power-button chip's for that light.
 - NetworkManager (`nmcli`) for the ESC online check, and PipeWire (`wpctl`) for the mute key.
+- For F1, an NVIDIA GPU with `nvidia-smi`. GPU temperature comes from a hwmon sensor labelled
+  `GPU` (on Alienware laptops, `alienware_wmi`), which does not wake a powered-down GPU.
 
 ## Install
 
@@ -68,7 +72,7 @@ Settings can live in `.env` or in a systemd drop-in (`systemctl --user edit keyl
 
     KEYLIGHTS_LIGHTS=DEL=llama:http://localhost:8080#my-model,END=ollama:http://gpu-box:11434
 
-ESC and F1–F5 belong to the built-in lights and cannot be used. Other key names: F6–F12, HOME, END,
+ESC and F1–F10 belong to the built-in lights and cannot be used. Other key names: F11, F12, HOME, END,
 DEL, PGUP, PGDOWN and the arrow keys.
 
 ### `llama`: llama.cpp server or router
