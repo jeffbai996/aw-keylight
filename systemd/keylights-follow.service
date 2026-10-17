@@ -4,9 +4,7 @@ After=keylights.service kbd-light-restore.service
 
 [Service]
 Type=oneshot
-# kbd-light writes on, dim or off. With the backlight off nothing keylights draws can be
-# seen, so it is stopped outright rather than left polling and rendering in the dark.
-ExecStart=/bin/sh -c 'if [ "$$(cat %h/.local/state/kbd-light/state 2>/dev/null)" = off ]; then exec systemctl --user stop keylights.service; else exec systemctl --user start keylights.service; fi'
+ExecStart=/bin/sh %h/repos/keylights/systemd/keylights-follow.sh
 
 [Install]
 WantedBy=default.target
