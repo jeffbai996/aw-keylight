@@ -9,6 +9,8 @@ Tested only on an Alienware m15 R2 (keyboard `0d62:0a1c`, AlienFX v5; power butt
 ## Requirements
 
 - Linux with hidraw, Python 3.10+, write access to the hidraw nodes of both chips.
+  The udev rules grant access to the active desktop user and members of `plugdev`.
+  Boot-time user services require `plugdev` membership because no desktop seat is active yet.
 - NetworkManager (`nmcli`) for ESC, PipeWire (`wpctl`) for the mute key.
 - F1: NVIDIA GPU with `nvidia-smi`. GPU temperature: hwmon sensor labelled `GPU` (`alienware_wmi`).
 

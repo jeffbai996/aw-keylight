@@ -1,3 +1,4 @@
-# Let the logged-in user write the AlienFX keyboard controller and the power-button lighting chip.
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0d62", ATTRS{idProduct}=="0a1c", TAG+="uaccess"
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="187c", ATTRS{idProduct}=="0550", TAG+="uaccess"
+# Seat ACLs alone exclude user services started before graphical login.
+# Allow plugdev members to restore lighting at boot; retain active-seat access.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0d62", ATTRS{idProduct}=="0a1c", GROUP="plugdev", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="187c", ATTRS{idProduct}=="0550", GROUP="plugdev", MODE="0660", TAG+="uaccess"
