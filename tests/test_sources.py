@@ -385,7 +385,7 @@ def test_two_slots_without_prompt_fields_read_when_any_busy_slot_has_no_tokens()
 
 
 def gate(ps_models, activity=None, activity_error=None):
-    """A fake client for an ollama-gate: /api/ps plus the optional /_gate/activity."""
+    """A fake client for an Ollama gateway: /api/ps plus the optional /_gate/activity."""
     def get(path, params=None):
         if path == "/api/ps":
             return {"models": list(ps_models)}

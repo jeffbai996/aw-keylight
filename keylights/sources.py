@@ -68,7 +68,7 @@ class OllamaState:
     loaded: bool  # any model is resident, an embedder included
     touched: float | None  # latest expiry among chat models; it moves when a request finishes
     answered: bool = True
-    # Live activity, from an ollama-gate's /_gate/activity; None when the gate has no such
+    # Live activity, from an Ollama gateway's /_gate/activity; None when the gate has no such
     # endpoint, in which case the light falls back to loaded.
     in_flight: int | None = None
     awaiting: int | None = None  # in flight with nothing streamed back yet: the prompt is being read
@@ -83,7 +83,7 @@ OLLAMA_DOWN = OllamaState(up=False, loaded=False, touched=None)
 
 @dataclass(frozen=True)
 class GpuState:
-    """What a host's GPU is doing, from a fleet status server's telemetry. Power draw and performance
+    """What a host's GPU is doing, from a status server's telemetry. Power draw and performance
     state show a short burst of work that utilisation, sampled coarsely, misses."""
 
     up: bool
@@ -100,7 +100,7 @@ GPU_DOWN = GpuState(up=False, power_w=None, limit_w=None, pstate=None)
 GPU_MAX_SAMPLE_AGE_S = 30.0
 # A host in gamemode is sampled about once a minute, to leave its card alone.
 GAMEMODE_MAX_SAMPLE_AGE_S = 180.0
-# Embedders such as the fleet's bge-m3 stay loaded all day and are not inference.
+# Embedders such as bge-m3 stay loaded all day and are not inference.
 EMBEDDING_MODEL = re.compile(r"bge|embed|nomic|minilm|mxbai|e5-|gte-", re.IGNORECASE)
 _EXCESS_FRACTION = re.compile(r"(\.\d{6})\d+")
 
